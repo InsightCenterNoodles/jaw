@@ -1,0 +1,49 @@
+// { N * M } is a dynamic array type. It will read a type N to determine how many type M to read. It is a Sequence
+// { I * M } is a fixed array type. It will read a conut of I items of type M. It is a Sequence
+
+// [I * M] fixed size array, a count of I of type M. This is POD and M must be POD
+
+// built in primitives
+// u8, u16, u32, u64
+// i8, i16, i32, i64
+// f32, f64
+
+// Built in aliases
+// alias byte = u8
+
+// alias DynShortString = {u8 * byte}
+// alias DynString = {u32 * byte}
+
+//use "myfile.txt" as Name
+
+// packs are POD. all members must be POD pack as well
+// these are read as a blob of bytes. All are sequential, no padding. Codegen will build accessors to extract types.
+// recommend similar sized types, order largest to smallest.
+pack MyPOD
+- a_thing : u8
+- b_thing : u64
+
+
+// Enums are POD and are either exhaustive or flexible. When converting from an underlying integer, if not in list and exhaustive, its an error.
+enum MyEnum : u8
+- F1 = 0
+- F2 = 1
+= Default = 255 // this will be selected if converting from an int not on the list
+
+
+// POD. primitives and enums allowed only. dest type must be large enough for bit allocation.
+bits MyFlags : u8
+- 0    is_thing : u8
+- 1-2  another_thing : u8
+- 3-4  some_stuff : MyEnum
+
+// dynamic. creates an enum as well (<name>ID)
+variant MyVariant : u8
+- 0 => MyRoot
+- 1 => MyPOD
+= 255 => Invalid // Optional, follows enum rules
+
+// Dynamic. can hold dynamics and POD
+seq MyRoot
+- first : u8
+- second : [4 * u64]
