@@ -17,8 +17,8 @@
 //use "myfile.txt" as Name
 
 // packs are POD. all members must be POD pack as well
-// these are read as a blob of bytes. All are sequential, no padding. Codegen will build accessors to extract types.
-// recommend similar sized types, order largest to smallest.
+// these are read as a blob of bytes. Layout is in the C manner, padding included.
+// Caution is advised
 pack MyPOD
 - a_thing : u8
 - b_thing : u64

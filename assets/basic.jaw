@@ -1,0 +1,30 @@
+pack MyPOD
+- a_thing : u8
+- b_thing : u64
+
+pack MyOtherPOD
+- first : MyPOD
+- second : [4 * u8]
+
+enum PlainEnum : u8
+- F1 = 0
+- F2 = 1
+
+enum BetterEnum : u8
+- A = 0
+- B = 1
+= DEFAULT = 255
+
+variant MyVariant : u8
+- 0 => MyPOD
+- 1 => MyOtherPOD
+= 2 => MyObject
+
+seq MyObject
+- name : {u8 * u8}
+- pod : MyOtherPOD
+
+bits MyFlags : u8
+- 0    is_thing : u8
+- 1-2  another_thing : u8
+- 3-4  some_stuff : PlainEnum
