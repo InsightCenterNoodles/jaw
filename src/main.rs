@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(x) = args.get(1) else {
         eprintln!(
             "Usage: {} <input.jaw> [output.hpp]",
-            args.get(0).map(String::as_str).unwrap_or("jaw")
+            args.first().map(String::as_str).unwrap_or("jaw")
         );
         return Err(Box::new(std::io::Error::other("Missing input")));
     };

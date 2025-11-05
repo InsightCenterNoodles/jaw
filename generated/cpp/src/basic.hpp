@@ -17,28 +17,8 @@
 
 namespace basic {
     namespace detail {
-        template <typename Reader> inline bool read_prim(Reader& r, uint8_t& v) { return r.read_u8(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, uint16_t& v) { return r.read_u16(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, uint32_t& v) { return r.read_u32(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, uint64_t& v) { return r.read_u64(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, int8_t& v) { return r.read_i8(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, int16_t& v) { return r.read_i16(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, int32_t& v) { return r.read_i32(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, int64_t& v) { return r.read_i64(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, float& v) { return r.read_f32(v); }
-        template <typename Reader> inline bool read_prim(Reader& r, double& v) { return r.read_f64(v); }
         template <typename Reader, typename T> inline bool read_raw(Reader& r, T& v) { return r.read_raw(v); }
         
-        template <typename Writer> inline bool write_prim(Writer& w, uint8_t v) { return w.write_u8(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, uint16_t v) { return w.write_u16(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, uint32_t v) { return w.write_u32(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, uint64_t v) { return w.write_u64(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, int8_t v) { return w.write_i8(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, int16_t v) { return w.write_i16(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, int32_t v) { return w.write_i32(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, int64_t v) { return w.write_i64(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, float v) { return w.write_f32(v); }
-        template <typename Writer> inline bool write_prim(Writer& w, double v) { return w.write_f64(v); }
         template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }
     } // namespace detail
     
@@ -50,7 +30,7 @@ namespace basic {
     
     template <typename Reader> inline bool read(Reader& r, BetterEnum& out) {
         uint8_t tmp{};
-        if (!detail::read_prim(r, tmp)) return false;
+        if (!detail::read_raw(r, tmp)) return false;
         switch (tmp) {
             case 0 : out = BetterEnum::A; break;
             case 1 : out = BetterEnum::B; break;
@@ -60,7 +40,7 @@ namespace basic {
     }
     template <typename Writer> inline bool write(Writer& w, const BetterEnum& in) {
         uint8_t tmp = static_cast<uint8_t>(in);
-        return detail::write_prim(w, tmp);
+        return detail::write_raw(w, tmp);
     }
     
     enum class PlainEnum : uint8_t {
@@ -70,13 +50,13 @@ namespace basic {
     
     template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
         uint8_t tmp{};
-        if (!detail::read_prim(r, tmp)) return false;
+        if (!detail::read_raw(r, tmp)) return false;
         out = static_cast<PlainEnum>(tmp);
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
         uint8_t tmp = static_cast<uint8_t>(in);
-        return detail::write_prim(w, tmp);
+        return detail::write_raw(w, tmp);
     }
     
     struct MyPOD {
@@ -103,12 +83,51 @@ namespace basic {
     
     template <typename Reader> inline bool read(Reader& r, MyFlags& out) {
         uint8_t tmp{};
-        if (!detail::read_prim(r, tmp)) return false;
+        if (!detail::read_raw(r, tmp)) return false;
         out.value = tmp;
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const MyFlags& in) {
-        return detail::write_prim(w, in.value);
+        return detail::write_raw(w, in.value);
+    }
+    
+    struct SmallSeq {
+        std::vector<float> list;
+    };
+    struct SmallSeqView {
+        std::span<const float> list;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, SmallSeq& out) {
+        {
+            uint8_t __n{};
+            if (!detail::read_raw(r, __n)) return false;
+            out.list.clear(); out.list.resize(static_cast<size_t>(__n));
+            for (size_t i = 0; i < static_cast<size_t>(__n); ++i) {
+                if (!detail::read_raw(r, out.list[i])) return false;
+            }
+        }
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const SmallSeq& in) {
+        {
+            uint8_t __n = static_cast<uint8_t>(in.list.size());
+            if (!detail::write_raw(w, __n)) return false;
+            for (size_t i = 0; i < in.list.size(); ++i) {
+                if (!detail::write_raw(w, in.list[i])) return false;
+            }
+        }
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const SmallSeqView& in) {
+        {
+            uint8_t __n = static_cast<uint8_t>(in.list.size());
+            if (!detail::write_raw(w, __n)) return false;
+            for (size_t i = 0; i < in.list.size(); ++i) {
+                if (!detail::write_raw(w, in.list[i])) return false;
+            }
+        }
+        return true;
     }
     
     struct MyOtherPOD {
@@ -123,56 +142,12 @@ namespace basic {
         return w.write_raw(in);
     }
     
-    struct MyObject {
-        std::vector<uint8_t> name;
-        MyOtherPOD pod;
-    };
-    struct MyObjectView {
-        std::span<const uint8_t> name;
-        const MyOtherPOD& pod;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyObject& out) {
-        {
-            uint8_t __n{};
-            if (!detail::read_prim(r, __n)) return false;
-            out.name.clear(); out.name.resize(static_cast<size_t>(__n));
-            for (size_t i = 0; i < static_cast<size_t>(__n); ++i) {
-                if (!detail::read_prim(r, out.name[i])) return false;
-            }
-        }
-        if (!read(r, out.pod)) return false;
-        return true;
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyObject& in) {
-        {
-            uint8_t __n = static_cast<uint8_t>(in.name.size());
-            if (!detail::write_prim(w, __n)) return false;
-            for (size_t i = 0; i < in.name.size(); ++i) {
-                if (!detail::write_prim(w, in.name[i])) return false;
-            }
-        }
-        if (!write(w, in.pod)) return false;
-        return true;
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyObjectView& in) {
-        {
-            uint8_t __n = static_cast<uint8_t>(in.name.size());
-            if (!detail::write_prim(w, __n)) return false;
-            for (size_t i = 0; i < in.name.size(); ++i) {
-                if (!detail::write_prim(w, in.name[i])) return false;
-            }
-        }
-        if (!write(w, in.pod)) return false;
-        return true;
-    }
-    
-    struct MyVariant { std::variant<MyPOD, MyOtherPOD, MyObject> value; };
-    struct MyVariantView { std::variant<MyPOD const* , MyOtherPOD const* , MyObject const* > value; };
+    struct MyVariant { std::variant<MyPOD, MyOtherPOD, SmallSeq> value; };
+    struct MyVariantView { std::variant<MyPOD const* , MyOtherPOD const* , SmallSeq const* > value; };
     
     template <typename Reader> inline bool read(Reader& r, MyVariant& out) {
         uint8_t tag{};
-        if (!detail::read_prim(r, tag)) return false;
+        if (!detail::read_raw(r, tag)) return false;
         switch (static_cast<decltype(tag)>(tag)) {
             case 0: {
                 MyPOD& tmp = out.value.emplace<0>();
@@ -185,7 +160,7 @@ namespace basic {
                 return true;
             }
             default: {
-                MyObject& tmp = out.value.emplace<2>();
+                SmallSeq& tmp = out.value.emplace<2>();
                 if (!read(r, tmp)) return false;
                 return true;
             }
@@ -194,7 +169,7 @@ namespace basic {
     }
     template <typename Writer> inline bool write(Writer& w, const MyVariant& in) {
         uint8_t tag = in.value.index();
-        if (!detail::write_prim(w, tag)) return false;
+        if (!detail::write_raw(w, tag)) return false;
         switch (tag) {
             case 0: {
                 const auto& ptr = std::get<0>(in.value);
@@ -216,7 +191,7 @@ namespace basic {
     }
     template <typename Writer> inline bool write(Writer& w, const MyVariantView& in) {
         uint8_t tag = in.value.index();
-        if (!detail::write_prim(w, tag)) return false;
+        if (!detail::write_raw(w, tag)) return false;
         switch (tag) {
             case 0: {
                 auto ptr = std::get<0>(in.value);
@@ -234,6 +209,50 @@ namespace basic {
                 return true;
             }
         }
+        return true;
+    }
+    
+    struct Root {
+        std::vector<uint8_t> name;
+        MyVariant var;
+    };
+    struct RootView {
+        std::span<const uint8_t> name;
+        const MyVariant& var;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, Root& out) {
+        {
+            uint8_t __n{};
+            if (!detail::read_raw(r, __n)) return false;
+            out.name.clear(); out.name.resize(static_cast<size_t>(__n));
+            for (size_t i = 0; i < static_cast<size_t>(__n); ++i) {
+                if (!detail::read_raw(r, out.name[i])) return false;
+            }
+        }
+        if (!read(r, out.var)) return false;
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const Root& in) {
+        {
+            uint8_t __n = static_cast<uint8_t>(in.name.size());
+            if (!detail::write_raw(w, __n)) return false;
+            for (size_t i = 0; i < in.name.size(); ++i) {
+                if (!detail::write_raw(w, in.name[i])) return false;
+            }
+        }
+        if (!write(w, in.var)) return false;
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const RootView& in) {
+        {
+            uint8_t __n = static_cast<uint8_t>(in.name.size());
+            if (!detail::write_raw(w, __n)) return false;
+            for (size_t i = 0; i < in.name.size(); ++i) {
+                if (!detail::write_raw(w, in.name[i])) return false;
+            }
+        }
+        if (!write(w, in.var)) return false;
         return true;
     }
     

@@ -28,11 +28,7 @@ pub enum Primitive {
 
 impl Primitive {
     fn is_integer(&self) -> bool {
-        match self {
-            Primitive::F32 => false,
-            Primitive::F64 => false,
-            _ => true,
-        }
+        !matches!(self, Primitive::F32 | Primitive::F64)
     }
 
     fn bit_width(&self) -> Option<u32> {
@@ -189,9 +185,9 @@ impl PartialModule {
         let mut indegree: HashMap<TypeID, usize> = HashMap::new();
         let mut dependents: HashMap<TypeID, Vec<TypeID>> = HashMap::new();
 
-        for (&id, _) in types {
+        for &id in types.keys() {
             indegree.entry(id).or_insert(0);
-            dependents.entry(id).or_insert_with(Vec::new);
+            dependents.entry(id).or_default();
         }
 
         // Helper to collect direct dependencies of a type
@@ -314,7 +310,7 @@ impl PartialModule {
                     continue;
                 }
                 if seen.insert(dep) {
-                    dependents.entry(dep).or_insert_with(Vec::new).push(id);
+                    dependents.entry(dep).or_default().push(id);
                     *indegree.entry(id).or_insert(0) += 1;
                 }
             }
@@ -349,11 +345,7 @@ impl PartialModule {
             }
         }
 
-        let map: HashMap<_, _> = self
-            .type_map
-            .iter()
-            .map(|(a, b)| (b.clone(), a.clone()))
-            .collect();
+        let map: HashMap<_, _> = self.type_map.iter().map(|(a, b)| (*b, a.clone())).collect();
 
         Module {
             name: self.name,
@@ -424,7 +416,7 @@ impl PartialModule {
         }
 
         // iterate through all types and validate rules
-        for (tid, t) in &self.types {
+        for t in self.types.values() {
             match &t.kind {
                 TypeKind::Pack(Pack { members }) => {
                     for (name, mtid) in members {
@@ -660,9 +652,9 @@ impl PartialModule {
         &self.types
     }
 
-    pub fn all_type_names(&self) -> &HashMap<String, TypeID> {
-        &self.type_map
-    }
+    // pub fn all_type_names(&self) -> &HashMap<String, TypeID> {
+    //     &self.type_map
+    // }
 
     fn add_builtins(&mut self) {
         let mut add_prim = |name: &str, p: Primitive| {
@@ -1069,7 +1061,7 @@ fn parse_inline_type(
     reader: &mut TokenReader,
 ) -> std::io::Result<TypeID> {
     // Decide based on next token: '{', '[', or identifier
-    if let Some(_) = reader.request_symbols(&[Symbol::LBrace]) {
+    if reader.request_symbols(&[Symbol::LBrace]).is_some() {
         // { N * M } where N is type or number; treated as DynamicArray
         reader.demand_symbol(Symbol::LBrace)?;
 
@@ -1126,7 +1118,7 @@ fn parse_inline_type(
                 },
             )),
         }
-    } else if let Some(_) = reader.request_symbols(&[Symbol::LBracket]) {
+    } else if reader.request_symbols(&[Symbol::LBracket]).is_some() {
         // [ I * M ] -> FixedArray
         reader.demand_symbol(Symbol::LBracket)?;
         let (count_i64, _) = reader.demand_number()?;

@@ -81,28 +81,8 @@ impl<'a> CppEmitter<'a> {
         self.wln("namespace detail {");
         self.indent();
         // Helpers for primitives
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, uint8_t& v) { return r.read_u8(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, uint16_t& v) { return r.read_u16(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, uint32_t& v) { return r.read_u32(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, uint64_t& v) { return r.read_u64(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, int8_t& v) { return r.read_i8(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, int16_t& v) { return r.read_i16(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, int32_t& v) { return r.read_i32(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, int64_t& v) { return r.read_i64(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, float& v) { return r.read_f32(v); }");
-        self.wln("template <typename Reader> inline bool read_prim(Reader& r, double& v) { return r.read_f64(v); }");
         self.wln("template <typename Reader, typename T> inline bool read_raw(Reader& r, T& v) { return r.read_raw(v); }");
         self.wln("");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, uint8_t v) { return w.write_u8(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, uint16_t v) { return w.write_u16(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, uint32_t v) { return w.write_u32(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, uint64_t v) { return w.write_u64(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, int8_t v) { return w.write_i8(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, int16_t v) { return w.write_i16(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, int32_t v) { return w.write_i32(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, int64_t v) { return w.write_i64(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, float v) { return w.write_f32(v); }");
-        self.wln("template <typename Writer> inline bool write_prim(Writer& w, double v) { return w.write_f64(v); }");
         self.wln("template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }");
         self.dedent();
         self.wln("} // namespace detail");
@@ -329,7 +309,7 @@ impl<'a> CppEmitter<'a> {
             TypeKind::Enum(e) => {
                 let u = self.cpp_primitive(&e.ty);
                 self.wln(&format!("{} tmp{{}};", u));
-                self.wln("if (!detail::read_prim(r, tmp)) return false;");
+                self.wln("if (!detail::read_raw(r, tmp)) return false;");
 
                 if let Some(def) = &e.default {
                     // slow mode
@@ -353,7 +333,7 @@ impl<'a> CppEmitter<'a> {
             TypeKind::Bitfld(b) => {
                 let u = self.cpp_type_owned(b.ty);
                 self.wln(&format!("{} tmp{{}};", u));
-                self.wln("if (!detail::read_prim(r, tmp)) return false;");
+                self.wln("if (!detail::read_raw(r, tmp)) return false;");
                 self.wln("out.value = tmp;");
                 self.wln("return true;");
             }
@@ -369,7 +349,7 @@ impl<'a> CppEmitter<'a> {
             TypeKind::Variant(v) => {
                 let discr_ty = self.cpp_primitive(&v.ty);
                 self.wln(&format!("{} tag{{}};", discr_ty));
-                self.wln("if (!detail::read_prim(r, tag)) return false;");
+                self.wln("if (!detail::read_raw(r, tag)) return false;");
                 self.wln("switch (static_cast<decltype(tag)>(tag)) {");
                 self.indent();
                 for (val, vt) in &v.members {
@@ -421,10 +401,10 @@ impl<'a> CppEmitter<'a> {
             TypeKind::Enum(e) => {
                 let u = self.cpp_primitive(&e.ty);
                 self.wln(&format!("{} tmp = static_cast<{}>(in);", u, u));
-                self.wln("return detail::write_prim(w, tmp);");
+                self.wln("return detail::write_raw(w, tmp);");
             }
             TypeKind::Bitfld(b) => {
-                self.wln("return detail::write_prim(w, in.value);");
+                self.wln("return detail::write_raw(w, in.value);");
             }
             TypeKind::Pack(p) => {
                 self.wln("return w.write_raw(in);");
@@ -439,7 +419,7 @@ impl<'a> CppEmitter<'a> {
                 // Write tag then payload matching active alternative
                 let ty = self.cpp_primitive(&v.ty);
                 self.wln(&format!("{} tag = in.value.index();", ty));
-                self.wln("if (!detail::write_prim(w, tag)) return false;");
+                self.wln("if (!detail::write_raw(w, tag)) return false;");
                 self.wln("switch (tag) {");
                 self.indent();
                 for (val, vt) in &v.members {
@@ -493,7 +473,7 @@ impl<'a> CppEmitter<'a> {
                 // Write tag then payload matching active alternative
                 let ty = self.cpp_primitive(&v.ty);
                 self.wln(&format!("{} tag = in.value.index();", ty));
-                self.wln("if (!detail::write_prim(w, tag)) return false;");
+                self.wln("if (!detail::write_raw(w, tag)) return false;");
                 self.wln("switch (tag) {");
                 self.indent();
                 for (val, vt) in &v.members {
@@ -532,10 +512,7 @@ impl<'a> CppEmitter<'a> {
         let ty = self.module.lookup(tid).unwrap();
         match &ty.kind {
             TypeKind::Primitive(_p) => {
-                self.wln(&format!(
-                    "if (!detail::read_prim(r, {})) return false;",
-                    lhs
-                ));
+                self.wln(&format!("if (!detail::read_raw(r, {})) return false;", lhs));
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -563,7 +540,7 @@ impl<'a> CppEmitter<'a> {
                     self.indent();
                     let size_cpp = self.cpp_type_owned(*size_type);
                     self.wln(&format!("{} __n{{}};", size_cpp));
-                    self.wln("if (!detail::read_prim(r, __n)) return false;");
+                    self.wln("if (!detail::read_raw(r, __n)) return false;");
                     self.wln(&format!(
                         "{}.clear(); {}.resize(static_cast<size_t>(__n));",
                         lhs, lhs
@@ -608,7 +585,7 @@ impl<'a> CppEmitter<'a> {
             TypeKind::Primitive(_) => {
                 // rely on overload resolution via expr type
                 self.wln(&format!(
-                    "if (!detail::write_prim(w, {})) return false;",
+                    "if (!detail::write_raw(w, {})) return false;",
                     expr
                 ));
             }
@@ -640,7 +617,7 @@ impl<'a> CppEmitter<'a> {
                         "{} __n = static_cast<{}>({}.size());",
                         size_cpp, size_cpp, expr
                     ));
-                    self.wln("if (!detail::write_prim(w, __n)) return false;");
+                    self.wln("if (!detail::write_raw(w, __n)) return false;");
                     self.wln(&format!("for (size_t i = 0; i < {}.size(); ++i) {{", expr));
                     self.indent();
                     let elem_expr = format!("{}[i]", expr);
