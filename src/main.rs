@@ -1,33 +1,37 @@
-pub mod codegen;
+mod codegen;
 mod module;
 mod tokenreader;
 mod tokens;
 
 use std::path::PathBuf;
 
+use clap::Parser;
+
+use crate::codegen::KnownGenerators;
+
+#[derive(Debug, clap::Parser)]
+#[command(version, about)]
+struct Arguments {
+    /// Input *.jaw file
+    input: PathBuf,
+
+    /// Type of code to generate
+    #[arg(short, long, value_enum)]
+    kind: KnownGenerators,
+
+    /// Output path, based on input
+    output: PathBuf,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args().collect();
+    let args = Arguments::parse();
 
-    let Some(x) = args.get(1) else {
-        eprintln!(
-            "Usage: {} <input.jaw> [output.hpp]",
-            args.first().map(String::as_str).unwrap_or("jaw")
-        );
-        return Err(Box::new(std::io::Error::other("Missing input")));
-    };
-
-    let path = PathBuf::from(x);
-
-    let module = module::PartialModule::from_file(&path)?;
+    let module = module::PartialModule::from_file(&args.input)?;
     let module = module.compile();
 
-    // Emit C++ header
-    let header = codegen::emit_cpp_header(module);
-    if let Some(out_path) = args.get(2) {
-        std::fs::write(out_path, header)?;
-    } else {
-        println!("{}", header);
-    }
+    let output = std::io::BufWriter::new(std::fs::File::create(args.output)?);
+
+    codegen::emit_for(args.kind, module, output)?;
 
     Ok(())
 }

@@ -10,6 +10,12 @@ use crate::tokens::{self, Keyword, Span, Symbol, Token};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeID(u32);
 
+impl std::fmt::Display for TypeID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TypeID({})", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Primitive {
     I8,
@@ -53,6 +59,27 @@ impl Primitive {
             Primitive::I64 => Some((i64::MIN as i128, i64::MAX as i128)),
             Primitive::F32 | Primitive::F64 => None,
         }
+    }
+}
+
+impl std::fmt::Display for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Primitive::I8 => "i8",
+                Primitive::I16 => "i16",
+                Primitive::I32 => "i32",
+                Primitive::I64 => "i64",
+                Primitive::U8 => "u8",
+                Primitive::U16 => "u16",
+                Primitive::U32 => "u32",
+                Primitive::U64 => "u64",
+                Primitive::F32 => "f32",
+                Primitive::F64 => "f64",
+            }
+        )
     }
 }
 
@@ -113,14 +140,117 @@ pub enum TypeKind {
 
 #[derive(Debug)]
 pub struct Type {
-    pub defined_at: Option<Span>,
+    pub defined_at: Span,
     pub kind: TypeKind,
 }
+
+// MARK: Error
+#[derive(Debug, thiserror::Error)]
+pub enum ModuleBuildError {
+    #[error("IO error")]
+    IO(#[from] std::io::Error),
+    #[error("Lexer error")]
+    Lex(#[from] crate::tokens::LexError),
+
+    #[error("Unknown type ID {0}")]
+    UnknownType(TypeID),
+
+    #[error("Incomplete type {0} first noted at {1:?}")]
+    BadLookup(String, Span),
+
+    #[error("Pack {0} contains non-POD member at {1}")]
+    NonPODInPack(String, Span),
+
+    #[error("Underlying type of enum {0} must be an integer (found {1})")]
+    NonIntEnum(String, Span, Primitive),
+
+    #[error("Enum value '{name}'={value} out of range [{min}..={max}] at {at}")]
+    EnumValueOutOfRange {
+        name: String,
+        at: Span,
+        value: i128,
+        min: i128,
+        max: i128,
+    },
+
+    #[error("Underlying type of bitfield {0} must be an integer (found {1})")]
+    NonIntBitfld(String, Span, String),
+
+    #[error("bitfield range for '{name}' out of bounds (end {end} >= width {width}) at {at}")]
+    BitfldVOutOfRange {
+        name: String,
+        at: Span,
+        end: u32,
+        width: u32,
+    },
+
+    #[error("Underlying type of variant {0} must be an integer (found {1})")]
+    NonIntVariant(String, Span, Primitive),
+
+    #[error("variant discriminant {value} out of range (max {max}) at {at}")]
+    VariantValueOutOfRange { at: Span, value: i128, max: i128 },
+
+    #[error("[I * M] requires M to be POD at {0}")]
+    FixedArrayRequiresPOD(Span),
+
+    #[error("{n_m}: size type must be a primitive integer at {at}")]
+    ArraySizeTypeNotInteger { n_m: &'static str, at: Span },
+
+    #[error("{i_m}: I must be positive at {at}")]
+    ArrayCountNotPositive { i_m: &'static str, at: Span },
+
+    #[error("invalid type name at {at}: {reason}")]
+    InvalidTypeName { at: Span, reason: String },
+
+    #[error("duplicate definition of type {name} at {at}{prev}")]
+    DuplicateTypeDefinition {
+        name: String,
+        at: Span,
+        prev: String,
+    },
+
+    #[error("bitfield member '{field}' must be primitive or enum at {at}")]
+    BitfieldMemberTypeInvalid { field: String, at: Span },
+
+    #[error("{kind} declarations do not have a default at {at}")]
+    UnexpectedDefault { kind: &'static str, at: Span },
+
+    #[error("invalid bit range start={start} end={end} at {at}")]
+    InvalidBitRange { at: Span, start: u32, end: u32 },
+
+    #[error("enum value must be an integer at {0}")]
+    EnumValueNotInteger(Span),
+
+    #[error("variant value must be non-negative at {0}")]
+    VariantValueNegative(Span),
+
+    #[error("enum underlying type for {0} must be primitive (found {1}) at {2}")]
+    NonPrimitiveEnumBase(String, String, Span),
+
+    #[error("variant underlying type for {0} must be primitive (found {1}) at {2}")]
+    NonPrimitiveVariantBase(String, String, Span),
+
+    #[error("unexpected token: expected {expected}, found {found:?}")]
+    UnexpectedToken {
+        expected: String,
+        found: crate::tokens::Token,
+    },
+
+    #[error("unexpected end of file")]
+    UnexpectedEOF,
+
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+type Result<T> = std::result::Result<T, ModuleBuildError>;
+
+// MARK: Module
 
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
-    pub type_map: HashMap<String, TypeID>,
+    pub type_map: HashMap<String, (TypeID, Span)>,
     pub inv_type_map: HashMap<TypeID, String>,
     pub types: HashMap<TypeID, Type>,
     pub type_order: Vec<TypeID>,
@@ -135,13 +265,13 @@ impl Module {
 #[derive(Debug)]
 pub struct PartialModule {
     pub name: String,
-    type_map: HashMap<String, TypeID>,
+    type_map: HashMap<String, (TypeID, Span)>,
     types: HashMap<TypeID, Type>,
     last_tid: u32,
 }
 
 impl PartialModule {
-    pub fn from_file(path: &Path) -> std::io::Result<Self> {
+    pub fn from_file(path: &Path) -> Result<Self> {
         let file_stem = path
             .file_stem()
             .and_then(|x| x.to_str())
@@ -345,7 +475,11 @@ impl PartialModule {
             }
         }
 
-        let map: HashMap<_, _> = self.type_map.iter().map(|(a, b)| (*b, a.clone())).collect();
+        let map: HashMap<_, _> = self
+            .type_map
+            .iter()
+            .map(|(a, b)| (b.0, a.clone()))
+            .collect();
 
         Module {
             name: self.name,
@@ -356,26 +490,15 @@ impl PartialModule {
         }
     }
 
-    pub fn validate(&self) -> std::io::Result<()> {
-        // helper: resolve a TypeID to Type reference
-        let get = |tid: TypeID| -> std::io::Result<&Type> {
-            self.lookup(tid)
-                .ok_or_else(|| std::io::Error::other("unknown referenced type"))
-        };
-
+    pub fn validate(&self) -> Result<()> {
         // helper: POD predicate with recursion guard
-        fn is_pod(
-            module: &PartialModule,
-            tid: TypeID,
-            seen: &mut HashSet<TypeID>,
-        ) -> std::io::Result<bool> {
+        fn is_pod(module: &PartialModule, tid: TypeID, seen: &mut HashSet<TypeID>) -> Result<bool> {
             if !seen.insert(tid) {
                 // recursive reference; treat as non-POD to be conservative
                 return Ok(false);
             }
-            let Some(t) = module.lookup(tid) else {
-                return Err(std::io::Error::other("unknown referenced type"));
-            };
+            let t = module.lookup(tid)?;
+
             let res = match &t.kind {
                 TypeKind::Primitive(_) => true,
                 TypeKind::Enum(_) => true,
@@ -416,18 +539,15 @@ impl PartialModule {
         }
 
         // iterate through all types and validate rules
-        for t in self.types.values() {
+        for (tid, t) in &self.types {
             match &t.kind {
                 TypeKind::Pack(Pack { members }) => {
                     for (name, mtid) in members {
                         let mut seen = HashSet::new();
                         if !is_pod(self, *mtid, &mut seen)? {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "pack contains non-POD member '{}'{}",
-                                name,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+
+                            return Err(ModuleBuildError::NonPODInPack(name.to_string(), at));
                         }
                     }
                 }
@@ -438,69 +558,74 @@ impl PartialModule {
                 }) => {
                     // ty is Primitive, must be integer
                     if !ty.is_integer() {
-                        return Err(std::io::Error::other(
-                            "enum underlying type must be integer",
-                        ));
+                        let check = self.name_and_span_for_tid(*tid)?;
+
+                        return Err(ModuleBuildError::NonIntEnum(check.0.into(), check.1, *ty));
                     }
-                    let Some((min, max)) = ty.int_bounds() else {
-                        return Err(std::io::Error::other("enum underlying bounds unavailable"));
-                    };
+                    // We just checked for integer above...
+                    let (min, max) = ty.int_bounds().expect("enum underlying bounds unavailable");
+
                     for (name, val) in members {
                         let v = *val as i128;
                         if v < min || v > max {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "enum value '{}'={} out of range [{}..={}]{}",
-                                name,
-                                val,
+                            return Err(ModuleBuildError::EnumValueOutOfRange {
+                                name: name.to_string(),
+                                at,
+                                value: (*val).into(),
                                 min,
                                 max,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+                            });
                         }
                     }
                     if let Some((name, val)) = default {
                         let v = *val as i128;
                         if v < min || v > max {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "enum default '{}'={} out of range [{}..={}]{}",
-                                name,
-                                val,
+                            return Err(ModuleBuildError::EnumValueOutOfRange {
+                                name: name.to_string(),
+                                at,
+                                value: (*val).into(),
                                 min,
                                 max,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+                            });
                         }
                     }
                 }
                 TypeKind::Bitfld(Bitfld { ty, members }) => {
                     // underlying must be primitive integer
-                    let underlying = get(*ty)?;
+                    let underlying = self.lookup(*ty)?;
                     let TypeKind::Primitive(p) = underlying.kind else {
-                        return Err(std::io::Error::other(
-                            "bitfield underlying must be primitive integer",
+                        let enum_type = self.name_and_span_for_tid(*tid)?;
+                        let underlying = self.name_and_span_for_tid(*ty)?;
+
+                        return Err(ModuleBuildError::NonIntBitfld(
+                            enum_type.0.into(),
+                            enum_type.1,
+                            underlying.0.into(),
                         ));
                     };
                     if !p.is_integer() {
-                        return Err(std::io::Error::other(
-                            "bitfield underlying must be primitive integer",
+                        let enum_type = self.name_and_span_for_tid(*tid)?;
+                        let underlying = self.name_and_span_for_tid(*ty)?;
+
+                        return Err(ModuleBuildError::NonIntBitfld(
+                            enum_type.0.into(),
+                            enum_type.1,
+                            underlying.0.into(),
                         ));
                     }
-                    let width = p
-                        .bit_width()
-                        .ok_or_else(|| std::io::Error::other("bit width unavailable"))?;
+                    let width = p.bit_width().unwrap();
                     for (name, _ft, range) in members {
                         let end = *range.end();
                         if end >= width {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "bitfield range for '{}' out of bounds (end {} >= width {}){}",
-                                name,
+                            return Err(ModuleBuildError::BitfldVOutOfRange {
+                                name: name.into(),
+                                at,
                                 end,
                                 width,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+                            });
                         }
                     }
                 }
@@ -511,37 +636,37 @@ impl PartialModule {
                 }) => {
                     // underlying must be primitive integer
                     if !ty.is_integer() {
-                        return Err(std::io::Error::other(
-                            "variant underlying must be primitive integer",
+                        let check = self.name_and_span_for_tid(*tid)?;
+
+                        return Err(ModuleBuildError::NonIntVariant(
+                            check.0.into(),
+                            check.1,
+                            *ty,
                         ));
                     }
-                    let Some((_min, max)) = ty.int_bounds() else {
-                        return Err(std::io::Error::other(
-                            "variant underlying bounds unavailable",
-                        ));
-                    };
+                    // already checked its an int above.
+                    // TODO: should probably collapse these checks into one
+                    let (_min, max) = ty.int_bounds().unwrap();
                     for (val, _vt) in members {
                         let v = *val as i128;
                         if v > max {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "variant discriminant {} out of range (max {}){}",
-                                val,
+                            return Err(ModuleBuildError::VariantValueOutOfRange {
+                                at,
+                                value: v,
                                 max,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+                            });
                         }
                     }
                     if let Some((val, _vt)) = default {
                         let v = *val as i128;
                         if v > max {
                             let at = t.defined_at;
-                            return Err(std::io::Error::other(format!(
-                                "variant default discriminant {} out of range (max {}){}",
-                                val,
+                            return Err(ModuleBuildError::VariantValueOutOfRange {
+                                at,
+                                value: v,
                                 max,
-                                at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                            )));
+                            });
                         }
                     }
                 }
@@ -549,10 +674,7 @@ impl PartialModule {
                     let mut seen = HashSet::new();
                     if !is_pod(self, *value_type, &mut seen)? {
                         let at = t.defined_at;
-                        return Err(std::io::Error::other(format!(
-                            "[I * M] requires M to be POD{}",
-                            at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                        )));
+                        return Err(ModuleBuildError::FixedArrayRequiresPOD(at));
                     }
                 }
                 TypeKind::DynamicArray(ArrayKind::Dynamic {
@@ -560,16 +682,20 @@ impl PartialModule {
                     value_type,
                 }) => {
                     // size type must be primitive integer
-                    let st = get(*size_type)?;
+                    let st = self.lookup(*size_type)?;
                     let TypeKind::Primitive(p) = st.kind else {
-                        return Err(std::io::Error::other(
-                            "{N * M}: N must be primitive integer",
-                        ));
+                        let at = t.defined_at;
+                        return Err(ModuleBuildError::ArraySizeTypeNotInteger {
+                            n_m: "{N * M}",
+                            at,
+                        });
                     };
                     if !p.is_integer() {
-                        return Err(std::io::Error::other(
-                            "{N * M}: N must be primitive integer",
-                        ));
+                        let at = t.defined_at;
+                        return Err(ModuleBuildError::ArraySizeTypeNotInteger {
+                            n_m: "{N * M}",
+                            at,
+                        });
                     }
                     // value_type can be anything (dynamic or POD), no constraint here
                     let _ = value_type; // silence pattern warning if any
@@ -578,10 +704,7 @@ impl PartialModule {
                     // {I * M}: I must be positive
                     if *count == 0 {
                         let at = t.defined_at;
-                        return Err(std::io::Error::other(format!(
-                            "{{I * M}}: I must be positive{}",
-                            at.map(|s| format!(" at {}", s)).unwrap_or_default()
-                        )));
+                        return Err(ModuleBuildError::ArrayCountNotPositive { i_m: "{I * M}", at });
                     }
                 }
                 // Other kinds have no extra checks here
@@ -592,60 +715,86 @@ impl PartialModule {
         Ok(())
     }
 
-    fn install_builtin_type(&mut self, mut name: &str, ty: Type) -> std::io::Result<TypeID> {
+    fn install_builtin_type(&mut self, mut name: &str, ty: Type) -> Result<TypeID> {
         name = name.trim();
 
         let id = *self.type_map.entry(name.to_string()).or_insert_with(|| {
             let ret = TypeID(self.last_tid);
             self.last_tid += 1;
-            ret
+            (ret, Span::Builtin)
         });
 
-        assert!(self.types.insert(id, ty).is_none());
+        assert!(self.types.insert(id.0, ty).is_none());
 
-        Ok(id)
+        Ok(id.0)
     }
 
-    fn install_type_id(&mut self, mut name: &str, span: &Span) -> std::io::Result<TypeID> {
+    fn install_type_id(&mut self, mut name: &str, span: &Span) -> Result<TypeID> {
         name = name.trim();
 
         validate_type_name(name, span)?;
 
-        if let Some(p) = self.type_map.get(name) {
-            if let Some(p) = self.lookup(*p) {
-                if let Some(p) = p.defined_at {
-                    return Err(std::io::Error::other(format!(
-                        "error at {span}: multiple definitions of type {name}. Previous definition at: {p}"
-                    )));
-                } else {
-                    return Err(std::io::Error::other(format!(
-                        "error at {span}: multiple definitions of type {name}."
-                    )));
-                }
+        if let Some((tid, _prev_decl_span)) = self.type_map.get(name) {
+            // If the type id already has a definition, it's a duplicate
+            if let Some(tdef) = self.types.get(tid) {
+                let prev = match tdef.defined_at {
+                    Span::Builtin => String::new(),
+                    other => format!(" (previous definition at: {other})"),
+                };
+                return Err(ModuleBuildError::DuplicateTypeDefinition {
+                    name: name.to_string(),
+                    at: *span,
+                    prev,
+                });
             }
         }
 
-        Ok(*self.type_map.entry(name.to_string()).or_insert_with(|| {
-            let ret = TypeID(self.last_tid);
-            self.last_tid += 1;
-            ret
-        }))
+        Ok(self
+            .type_map
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                let ret = TypeID(self.last_tid);
+                self.last_tid += 1;
+                (ret, *span)
+            })
+            .0)
     }
 
-    fn lookup_type_id(&mut self, mut name: &str, span: &Span) -> std::io::Result<TypeID> {
+    fn lookup_type_id(&mut self, mut name: &str, span: &Span) -> Result<TypeID> {
         name = name.trim();
 
         validate_type_name(name, span)?;
 
-        Ok(*self.type_map.entry(name.to_string()).or_insert_with(|| {
-            let ret = TypeID(self.last_tid);
-            self.last_tid += 1;
-            ret
-        }))
+        Ok(self
+            .type_map
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                let ret = TypeID(self.last_tid);
+                self.last_tid += 1;
+                (ret, *span)
+            })
+            .0)
     }
 
-    pub fn lookup(&self, t: TypeID) -> Option<&Type> {
-        self.types.get(&t)
+    pub fn name_and_span_for_tid(&self, t: TypeID) -> Result<(&String, Span)> {
+        let check = self.type_map.iter().find(|x| x.1.0 == t);
+
+        if let Some(check) = check {
+            Ok((check.0, check.1.1))
+        } else {
+            Err(ModuleBuildError::UnknownType(t))
+        }
+    }
+
+    pub fn lookup(&self, t: TypeID) -> Result<&Type> {
+        self.types.get(&t).ok_or_else(|| {
+            // expensive, but this is an error, so eh
+
+            match self.name_and_span_for_tid(t) {
+                Ok(check) => ModuleBuildError::BadLookup(check.0.clone(), check.1),
+                Err(x) => x,
+            }
+        })
     }
 
     pub fn all_types(&self) -> &HashMap<TypeID, Type> {
@@ -661,7 +810,7 @@ impl PartialModule {
             self.install_builtin_type(
                 name,
                 Type {
-                    defined_at: None,
+                    defined_at: Span::Builtin,
                     kind: TypeKind::Primitive(p),
                 },
             )
@@ -683,30 +832,29 @@ impl PartialModule {
     }
 }
 
-fn validate_type_name(name: &str, span: &Span) -> std::io::Result<()> {
+fn validate_type_name(name: &str, span: &Span) -> Result<()> {
     if let Some(x) = name.chars().next() {
         if !x.is_alphabetic() {
-            return Err(std::io::Error::other(format!(
-                "error at {span}: types must start with alpha"
-            )));
+            return Err(ModuleBuildError::InvalidTypeName {
+                at: *span,
+                reason: "types must start with alpha".to_string(),
+            });
         }
     }
 
     for c in name.chars() {
         if c.is_whitespace() {
-            return Err(std::io::Error::other(format!(
-                "error at {span}: types must not contain whitespace"
-            )));
+            return Err(ModuleBuildError::InvalidTypeName {
+                at: *span,
+                reason: "types must not contain whitespace".to_string(),
+            });
         }
     }
 
     Ok(())
 }
 
-fn parse_decl_head(
-    module: &mut PartialModule,
-    reader: &mut TokenReader,
-) -> std::io::Result<TypeID> {
+fn parse_decl_head(module: &mut PartialModule, reader: &mut TokenReader) -> Result<TypeID> {
     let tid = {
         let (ident, span) = reader.demand_identifier()?;
 
@@ -716,10 +864,7 @@ fn parse_decl_head(
     Ok(tid)
 }
 
-fn parse_decl_head_sub(
-    module: &mut PartialModule,
-    reader: &mut TokenReader,
-) -> std::io::Result<TypeID> {
+fn parse_decl_head_sub(module: &mut PartialModule, reader: &mut TokenReader) -> Result<TypeID> {
     reader.demand_symbol(Symbol::Colon)?;
 
     let (ident, span) = reader.demand_identifier()?;
@@ -732,10 +877,10 @@ fn parse_body<F, G>(
     reader: &mut TokenReader,
     mut f: F,
     mut def: G,
-) -> std::io::Result<()>
+) -> Result<()>
 where
-    F: FnMut(&mut PartialModule, &mut TokenReader) -> std::io::Result<()>,
-    G: FnMut(&mut PartialModule, &mut TokenReader) -> std::io::Result<()>,
+    F: FnMut(&mut PartialModule, &mut TokenReader) -> Result<()>,
+    G: FnMut(&mut PartialModule, &mut TokenReader) -> Result<()>,
 {
     while let Some(sym) = reader.request_symbols(&[Symbol::Minus, Symbol::Equals]) {
         // consume the leading '-' or '=' before delegating
@@ -756,7 +901,7 @@ where
     Ok(())
 }
 
-fn parse_pack(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::Result<()> {
+fn parse_pack(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()> {
     let at = reader.current_span();
 
     let tid = parse_decl_head(module, reader)?;
@@ -780,7 +925,10 @@ fn parse_pack(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
 
             Ok(())
         },
-        |_, _| Err(std::io::Error::other("packs do not have a default")),
+        |_, r| {
+            let at = r.current_span();
+            Err(ModuleBuildError::UnexpectedDefault { kind: "pack", at })
+        },
     )?;
 
     let at = at.union(&reader.current_span());
@@ -788,7 +936,7 @@ fn parse_pack(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
     module.types.insert(
         tid,
         Type {
-            defined_at: Some(at),
+            defined_at: at,
             kind: TypeKind::Pack(Pack { members }),
         },
     );
@@ -796,7 +944,7 @@ fn parse_pack(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
     Ok(())
 }
 
-fn parse_enum(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::Result<()> {
+fn parse_enum(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()> {
     let at = reader.current_span();
 
     let tid = parse_decl_head(module, reader)?;
@@ -817,10 +965,10 @@ fn parse_enum(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
 
             r.demand_symbol(Symbol::Equals)?;
 
-            let mem_value: i64 = r
-                .demand_number()
-                .map_err(|_| std::io::Error::other("enum values must be integers"))?
-                .0;
+            let mem_value: i64 = match r.demand_number() {
+                Ok(v) => v.0,
+                Err(_) => return Err(ModuleBuildError::EnumValueNotInteger(r.current_span())),
+            };
 
             r.demand_newline()?;
 
@@ -833,10 +981,10 @@ fn parse_enum(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
 
             r.demand_symbol(Symbol::Equals)?;
 
-            let mem_value: i64 = r
-                .demand_number()
-                .map_err(|_| std::io::Error::other("enum values must be integers"))?
-                .0;
+            let mem_value: i64 = match r.demand_number() {
+                Ok(v) => v.0,
+                Err(_) => return Err(ModuleBuildError::EnumValueNotInteger(r.current_span())),
+            };
 
             r.demand_newline()?;
 
@@ -848,34 +996,42 @@ fn parse_enum(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
 
     let at = at.union(&reader.current_span());
 
-    let sub_type = module
-        .lookup(sub_tid)
-        .ok_or_else(|| std::io::Error::other("enum type unknown"))?;
+    let sub_type = module.lookup(sub_tid)?;
 
-    let TypeKind::Primitive(ref p) = sub_type.kind else {
-        return Err(std::io::Error::other("enum type must be primitive integer"));
-    };
+    match sub_type.kind {
+        TypeKind::Primitive(p) => {
+            if !p.is_integer() {
+                let (ename, espan) = module.name_and_span_for_tid(tid)?;
+                return Err(ModuleBuildError::NonIntEnum(ename.clone(), espan, p));
+            }
 
-    if !p.is_integer() {
-        return Err(std::io::Error::other("enum type must be primitive integer"));
+            module.types.insert(
+                tid,
+                Type {
+                    defined_at: at,
+                    kind: TypeKind::Enum(Enum {
+                        ty: p,
+                        members,
+                        default,
+                    }),
+                },
+            );
+        }
+        _ => {
+            let (ename, _espan) = module.name_and_span_for_tid(tid)?;
+            let (bname, bspan) = module.name_and_span_for_tid(sub_tid)?;
+            return Err(ModuleBuildError::NonPrimitiveEnumBase(
+                ename.clone(),
+                bname.clone(),
+                bspan,
+            ));
+        }
     }
-
-    module.types.insert(
-        tid,
-        Type {
-            defined_at: Some(at),
-            kind: TypeKind::Enum(Enum {
-                ty: *p,
-                members,
-                default,
-            }),
-        },
-    );
 
     Ok(())
 }
 
-fn parse_bits(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::Result<()> {
+fn parse_bits(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()> {
     let at_start = reader.current_span();
 
     let tid = parse_decl_head(module, reader)?;
@@ -914,49 +1070,65 @@ fn parse_bits(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
             let field_ty = m.lookup_type_id(&ty_name, &ty_span)?;
 
             // validate field type: only primitive or enum allowed
-            if let Some(tdef) = m.lookup(field_ty) {
-                match tdef.kind {
-                    TypeKind::Primitive(_) | TypeKind::Enum(_) => {}
-                    _ => {
-                        return Err(std::io::Error::other(format!(
-                            "error at {}: bitfield members must be primitive or enum",
-                            field_span
-                        )));
-                    }
+            let tdef = m.lookup(field_ty)?;
+            match tdef.kind {
+                TypeKind::Primitive(_) | TypeKind::Enum(_) => {}
+                _ => {
+                    return Err(ModuleBuildError::BitfieldMemberTypeInvalid {
+                        field: field_name.clone(),
+                        at: field_span,
+                    });
                 }
             }
 
             if start > end {
-                return Err(std::io::Error::other("invalid bit range: start > end"));
+                return Err(ModuleBuildError::InvalidBitRange {
+                    at: field_span,
+                    start,
+                    end,
+                });
             }
 
             members.push((field_name, field_ty, start..=end));
 
             Ok(())
         },
-        |_, _| Err(std::io::Error::other("bits do not have a default")),
+        |_, r| {
+            let at = r.current_span();
+            Err(ModuleBuildError::UnexpectedDefault { kind: "bits", at })
+        },
     )?;
 
     // validate underlying type is primitive integer
-    let sub_type = module
-        .lookup(sub_tid)
-        .ok_or_else(|| std::io::Error::other("bits type unknown"))?;
-    let TypeKind::Primitive(ref p) = sub_type.kind else {
-        return Err(std::io::Error::other(
-            "bits underlying type must be primitive integer",
-        ));
-    };
-    if !p.is_integer() {
-        return Err(std::io::Error::other(
-            "bits underlying type must be primitive integer",
-        ));
+    let sub_type = module.lookup(sub_tid)?;
+    match sub_type.kind {
+        TypeKind::Primitive(p) => {
+            if !p.is_integer() {
+                let bit_type = module.name_and_span_for_tid(tid)?;
+                let underlying = module.name_and_span_for_tid(sub_tid)?;
+                return Err(ModuleBuildError::NonIntBitfld(
+                    bit_type.0.clone(),
+                    bit_type.1,
+                    underlying.0.clone(),
+                ));
+            }
+        }
+        _ => {
+            let bit_type = module.name_and_span_for_tid(tid)?;
+            let underlying = module.name_and_span_for_tid(sub_tid)?;
+            return Err(ModuleBuildError::NonIntBitfld(
+                bit_type.0.clone(),
+                bit_type.1,
+                underlying.0.clone(),
+            ));
+        }
     }
 
     let at = at_start.union(&reader.current_span());
     module.types.insert(
         tid,
         Type {
-            defined_at: Some(at),
+            defined_at: at,
             kind: TypeKind::Bitfld(Bitfld {
                 ty: sub_tid,
                 members,
@@ -967,7 +1139,7 @@ fn parse_bits(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::
     Ok(())
 }
 
-fn parse_variant(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::Result<()> {
+fn parse_variant(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()> {
     let at_start = reader.current_span();
 
     let tid = parse_decl_head(module, reader)?;
@@ -984,7 +1156,7 @@ fn parse_variant(module: &mut PartialModule, reader: &mut TokenReader) -> std::i
         |m, r| {
             let (val_i64, _) = r.demand_number()?;
             if val_i64 < 0 {
-                return Err(std::io::Error::other("variant value must be non-negative"));
+                return Err(ModuleBuildError::VariantValueNegative(r.current_span()));
             }
             let val = val_i64 as u64;
 
@@ -1001,7 +1173,7 @@ fn parse_variant(module: &mut PartialModule, reader: &mut TokenReader) -> std::i
         |m, r| {
             let (val_i64, _) = r.demand_number()?;
             if val_i64 < 0 {
-                return Err(std::io::Error::other("variant value must be non-negative"));
+                return Err(ModuleBuildError::VariantValueNegative(r.current_span()));
             }
             let val = val_i64 as u64;
 
@@ -1018,32 +1190,37 @@ fn parse_variant(module: &mut PartialModule, reader: &mut TokenReader) -> std::i
     )?;
 
     // validate discriminant type is primitive integer
-    let sub_type = module
-        .lookup(sub_tid)
-        .ok_or_else(|| std::io::Error::other("variant type unknown"))?;
-    let TypeKind::Primitive(ref p) = sub_type.kind else {
-        return Err(std::io::Error::other(
-            "variant underlying type must be primitive integer",
-        ));
-    };
-    if !p.is_integer() {
-        return Err(std::io::Error::other(
-            "variant underlying type must be primitive integer",
-        ));
-    }
+    let sub_type = module.lookup(sub_tid)?;
+    match sub_type.kind {
+        TypeKind::Primitive(p) => {
+            if !p.is_integer() {
+                let (vname, vspan) = module.name_and_span_for_tid(tid)?;
+                return Err(ModuleBuildError::NonIntVariant(vname.clone(), vspan, p));
+            }
 
-    let at = at_start.union(&reader.current_span());
-    module.types.insert(
-        tid,
-        Type {
-            defined_at: Some(at),
-            kind: TypeKind::Variant(Variant {
-                ty: *p,
-                members,
-                default,
-            }),
-        },
-    );
+            let at = at_start.union(&reader.current_span());
+            module.types.insert(
+                tid,
+                Type {
+                    defined_at: at,
+                    kind: TypeKind::Variant(Variant {
+                        ty: p,
+                        members,
+                        default,
+                    }),
+                },
+            );
+        }
+        _ => {
+            let (vname, _vspan) = module.name_and_span_for_tid(tid)?;
+            let (bname, bspan) = module.name_and_span_for_tid(sub_tid)?;
+            return Err(ModuleBuildError::NonPrimitiveVariantBase(
+                vname.clone(),
+                bname.clone(),
+                bspan,
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -1056,10 +1233,7 @@ fn alloc_anon_type(module: &mut PartialModule, ty: Type) -> TypeID {
     id
 }
 
-fn parse_inline_type(
-    module: &mut PartialModule,
-    reader: &mut TokenReader,
-) -> std::io::Result<TypeID> {
+fn parse_inline_type(module: &mut PartialModule, reader: &mut TokenReader) -> Result<TypeID> {
     // Decide based on next token: '{', '[', or identifier
     if reader.request_symbols(&[Symbol::LBrace]).is_some() {
         // { N * M } where N is type or number; treated as DynamicArray
@@ -1080,7 +1254,7 @@ fn parse_inline_type(
                 let tid = alloc_anon_type(
                     module,
                     Type {
-                        defined_at: Some(at),
+                        defined_at: at,
                         kind: TypeKind::DynamicArray(ArrayKind::Fixed {
                             count: n,
                             value_type,
@@ -1101,7 +1275,7 @@ fn parse_inline_type(
                 let tid = alloc_anon_type(
                     module,
                     Type {
-                        defined_at: Some(at),
+                        defined_at: at,
                         kind: TypeKind::DynamicArray(ArrayKind::Dynamic {
                             size_type,
                             value_type,
@@ -1121,9 +1295,12 @@ fn parse_inline_type(
     } else if reader.request_symbols(&[Symbol::LBracket]).is_some() {
         // [ I * M ] -> FixedArray
         reader.demand_symbol(Symbol::LBracket)?;
-        let (count_i64, _) = reader.demand_number()?;
+        let (count_i64, sp) = reader.demand_number()?;
         if count_i64 < 0 {
-            return Err(std::io::Error::other("array count must be non-negative"));
+            return Err(ModuleBuildError::ArrayCountNotPositive {
+                i_m: "[I * M]",
+                at: sp,
+            });
         }
         let count = count_i64 as u64;
         reader.demand_symbol(Symbol::Asterisk)?;
@@ -1135,7 +1312,7 @@ fn parse_inline_type(
         let tid = alloc_anon_type(
             module,
             Type {
-                defined_at: Some(at),
+                defined_at: at,
                 kind: TypeKind::FixedArray(ArrayKind::Fixed { count, value_type }),
             },
         );
@@ -1147,7 +1324,7 @@ fn parse_inline_type(
     }
 }
 
-fn parse_seq(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::Result<()> {
+fn parse_seq(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()> {
     let at_start = reader.current_span();
     let tid = parse_decl_head(module, reader)?;
     reader.demand_newline()?;
@@ -1168,14 +1345,20 @@ fn parse_seq(module: &mut PartialModule, reader: &mut TokenReader) -> std::io::R
             members.push((mem_name, ty));
             Ok(())
         },
-        |_, _| Err(std::io::Error::other("sequences do not have a default")),
+        |_, r| {
+            let at = r.current_span();
+            Err(ModuleBuildError::UnexpectedDefault {
+                kind: "sequence",
+                at,
+            })
+        },
     )?;
 
     let at = at_start.union(&reader.current_span());
     module.types.insert(
         tid,
         Type {
-            defined_at: Some(at),
+            defined_at: at,
             kind: TypeKind::Sequence(Sequence { members }),
         },
     );

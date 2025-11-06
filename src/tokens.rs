@@ -1,33 +1,42 @@
 use std::{fmt::Display, path::Path};
 
+use thiserror::Error;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
 }
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(line {} column {})", self.line, self.column)
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    pub start: Position,
-    pub end: Position,
+pub enum Span {
+    #[default]
+    Builtin,
+    Source(Position, Position),
 }
 
 impl Span {
     pub fn union(&self, other: &Span) -> Span {
-        Self {
-            start: self.start,
-            end: other.end,
+        match (self, other) {
+            (Span::Builtin, Span::Builtin) => Span::Builtin,
+            (Span::Builtin, x) => *x,
+            (x, Span::Builtin) => *x,
+            (Span::Source(s1, _), Span::Source(_, e2)) => Self::Source(*s1, *e2),
         }
     }
 }
 
 impl Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "(line {}, column {})",
-            self.start.line, self.start.column
-        )
+        match self {
+            Span::Builtin => write!(f, "(builtin)"),
+            Span::Source(s, e) => write!(f, "(from {}, to {})", s, e),
+        }
     }
 }
 
@@ -75,44 +84,19 @@ pub struct Token {
     pub span: Span,
 }
 
-#[derive(Debug)]
-pub struct LexError {
-    message: String,
-    span: Option<Span>,
+#[derive(Debug, Error)]
+pub enum LexError {
+    #[error("lexer error {0}")]
+    LexErr(String),
+
+    #[error("lexer error {0} at {1:?}")]
+    LexErrLoc(String, Span),
+
+    #[error("IO error")]
+    IO(#[from] std::io::Error),
 }
 
-impl LexError {
-    fn new(message: impl Into<String>, span: Option<Span>) -> Self {
-        Self {
-            message: message.into(),
-            span,
-        }
-    }
-}
-
-impl std::fmt::Display for LexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(span) = self.span {
-            write!(
-                f,
-                "{} (line {}, column {})",
-                self.message, span.start.line, span.start.column
-            )
-        } else {
-            write!(f, "{}", self.message)
-        }
-    }
-}
-
-impl std::error::Error for LexError {}
-
-impl From<LexError> for std::io::Error {
-    fn from(value: LexError) -> Self {
-        std::io::Error::other(value)
-    }
-}
-
-pub fn lex_path(path: &Path) -> std::io::Result<Vec<Token>> {
+pub fn lex_path(path: &Path) -> Result<Vec<Token>, LexError> {
     let source = std::fs::read_to_string(path)?;
     Lexer::new(&source).collect_tokens().map_err(Into::into)
 }
@@ -122,7 +106,7 @@ pub fn lex_str(source: &str) -> Result<Vec<Token>, LexError> {
 }
 
 struct Lexer<'a> {
-    source: &'a str,
+    source: std::borrow::Cow<'a, str>,
     cursor: usize,
     line: usize,
     column: usize,
@@ -131,7 +115,7 @@ struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
         Self {
-            source,
+            source: source.into(),
             cursor: 0,
             line: 1,
             column: 1,
@@ -148,10 +132,7 @@ impl<'a> Lexer<'a> {
                 let pos = self.position();
                 tokens.push(Token {
                     kind: TokenKind::EndOfFile,
-                    span: Span {
-                        start: pos,
-                        end: pos,
-                    },
+                    span: Span::Source(pos, pos),
                 });
                 break;
             };
@@ -224,9 +205,9 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        let value: u64 = literal
-            .parse()
-            .map_err(|_| LexError::new("invalid integer literal", Some(self.span_from(start))))?;
+        let value: u64 = literal.parse().map_err(|_| {
+            LexError::LexErrLoc("invalid integer literal".to_owned(), self.span_from(start))
+        })?;
 
         Ok(Token {
             kind: TokenKind::Number(value),
@@ -282,17 +263,17 @@ impl<'a> Lexer<'a> {
                     });
                 }
                 '\n' => {
-                    return Err(LexError::new(
-                        "string literal cannot span multiple lines",
-                        Some(self.span_from(start)),
+                    return Err(LexError::LexErrLoc(
+                        "string literal cannot span multiple lines".to_owned(),
+                        self.span_from(start),
                     ));
                 }
                 '\\' => {
                     self.bump();
                     let Some(next) = self.peek_char() else {
-                        return Err(LexError::new(
-                            "unterminated escape sequence",
-                            Some(self.span_from(start)),
+                        return Err(LexError::LexErrLoc(
+                            "unterminated escape sequence".to_owned(),
+                            self.span_from(start),
                         ));
                     };
 
@@ -310,9 +291,9 @@ impl<'a> Lexer<'a> {
                             self.bump();
                         }
                         _ => {
-                            return Err(LexError::new(
-                                "unsupported escape sequence",
-                                Some(self.span_from(start)),
+                            return Err(LexError::LexErrLoc(
+                                "unsupported escape sequence".into(),
+                                self.span_from(start),
                             ));
                         }
                     }
@@ -324,18 +305,18 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Err(LexError::new(
-            "unterminated string literal",
-            Some(self.span_from(start)),
+        Err(LexError::LexErrLoc(
+            "unterminated string literal".into(),
+            self.span_from(start),
         ))
     }
 
     fn lex_symbol(&mut self) -> Result<Token, LexError> {
         let start = self.position();
         let Some(ch) = self.peek_char() else {
-            return Err(LexError::new(
-                "unexpected end of input",
-                Some(self.span_from(start)),
+            return Err(LexError::LexErrLoc(
+                "unexpected end of input".into(),
+                self.span_from(start),
             ));
         };
 
@@ -360,9 +341,9 @@ impl<'a> Lexer<'a> {
             '}' => TokenKind::Symbol(Symbol::RBrace),
             '*' => TokenKind::Symbol(Symbol::Asterisk),
             _ => {
-                return Err(LexError::new(
+                return Err(LexError::LexErrLoc(
                     format!("unexpected character '{}'", ch),
-                    Some(self.span_from(start)),
+                    self.span_from(start),
                 ));
             }
         };
@@ -383,10 +364,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn span_from(&self, start: Position) -> Span {
-        Span {
-            start,
-            end: self.position(),
-        }
+        Span::Source(start, self.position())
     }
 
     fn bump(&mut self) -> Option<char> {

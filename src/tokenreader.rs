@@ -1,3 +1,4 @@
+use crate::module::ModuleBuildError;
 use crate::tokens::{Keyword, Span, Symbol, Token, TokenKind};
 
 pub struct TokenReader {
@@ -13,8 +14,11 @@ impl TokenReader {
         self.tokens.peek().map(|x| x.span).unwrap_or_default()
     }
 
-    pub fn make_unexpected(&self, wanted: &str, found: Token) -> std::io::Error {
-        std::io::Error::other(format!("expected {wanted}, found {found:?}"))
+    pub fn make_unexpected(&self, wanted: &str, found: Token) -> ModuleBuildError {
+        ModuleBuildError::UnexpectedToken {
+            expected: wanted.to_string(),
+            found,
+        }
     }
 
     pub fn scan_to_next_kw(&mut self) -> Option<(Keyword, Span)> {
@@ -32,13 +36,11 @@ impl TokenReader {
         }
     }
 
-    pub fn demand_next(&mut self) -> std::io::Result<Token> {
-        self.tokens
-            .next()
-            .ok_or_else(|| std::io::Error::other("expected token, found end of file"))
+    pub fn demand_next(&mut self) -> Result<Token, ModuleBuildError> {
+        self.tokens.next().ok_or(ModuleBuildError::UnexpectedEOF)
     }
 
-    pub fn demand_number(&mut self) -> std::io::Result<(i64, Span)> {
+    pub fn demand_number(&mut self) -> Result<(i64, Span), ModuleBuildError> {
         let token = self.demand_next()?;
 
         let is_neg = self.request_symbols(&[Symbol::Minus]).is_some();
@@ -49,12 +51,12 @@ impl TokenReader {
 
         let x: i64 = x
             .try_into()
-            .map_err(|_| std::io::Error::other("internal error parsing integer"))?;
+            .map_err(|_| ModuleBuildError::Internal("failed to parse integer literal".to_string()))?;
 
         Ok((if is_neg { -x } else { x }, token.span))
     }
 
-    pub fn demand_identifier(&mut self) -> std::io::Result<(String, Span)> {
+    pub fn demand_identifier(&mut self) -> Result<(String, Span), ModuleBuildError> {
         let token = self.demand_next()?;
         let TokenKind::Identifier(x) = token.kind else {
             return Err(self.make_unexpected("identifier", token));
@@ -63,7 +65,7 @@ impl TokenReader {
         Ok((x, token.span))
     }
 
-    pub fn demand_newline(&mut self) -> std::io::Result<Span> {
+    pub fn demand_newline(&mut self) -> Result<Span, ModuleBuildError> {
         let token = self.demand_next()?;
         match token.kind {
             TokenKind::Newline | TokenKind::EndOfFile => {}
@@ -73,7 +75,7 @@ impl TokenReader {
         Ok(token.span)
     }
 
-    pub fn demand_fat_arrow(&mut self) -> std::io::Result<()> {
+    pub fn demand_fat_arrow(&mut self) -> Result<(), ModuleBuildError> {
         let token = self.demand_next()?;
         match token.kind {
             TokenKind::FatArrow => Ok(()),
@@ -81,7 +83,7 @@ impl TokenReader {
         }
     }
 
-    pub fn demand_symbol(&mut self, sym: Symbol) -> std::io::Result<()> {
+    pub fn demand_symbol(&mut self, sym: Symbol) -> Result<(), ModuleBuildError> {
         let token = self.demand_next()?;
         let TokenKind::Symbol(x) = token.kind else {
             return Err(self.make_unexpected("symbol", token));
@@ -94,7 +96,7 @@ impl TokenReader {
         Ok(())
     }
 
-    pub fn demand_symbols(&mut self, syms: &[Symbol]) -> std::io::Result<Symbol> {
+    pub fn demand_symbols(&mut self, syms: &[Symbol]) -> Result<Symbol, ModuleBuildError> {
         let token = self.demand_next()?;
         let TokenKind::Symbol(x) = token.kind else {
             return Err(self.make_unexpected("symbol", token));

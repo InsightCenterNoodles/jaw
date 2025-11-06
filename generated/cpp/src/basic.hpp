@@ -22,6 +22,22 @@ namespace basic {
         template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }
     } // namespace detail
     
+    enum class PlainEnum : uint8_t {
+        F1 = 0,
+        F2 = 1,
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
+        uint8_t tmp{};
+        if (!detail::read_raw(r, tmp)) return false;
+        out = static_cast<PlainEnum>(tmp);
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
+        uint8_t tmp = static_cast<uint8_t>(in);
+        return detail::write_raw(w, tmp);
+    }
+    
     enum class BetterEnum : uint8_t {
         A = 0,
         B = 1,
@@ -43,34 +59,6 @@ namespace basic {
         return detail::write_raw(w, tmp);
     }
     
-    enum class PlainEnum : uint8_t {
-        F1 = 0,
-        F2 = 1,
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
-        uint8_t tmp{};
-        if (!detail::read_raw(r, tmp)) return false;
-        out = static_cast<PlainEnum>(tmp);
-        return true;
-    }
-    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
-        uint8_t tmp = static_cast<uint8_t>(in);
-        return detail::write_raw(w, tmp);
-    }
-    
-    struct MyPOD {
-        uint8_t a_thing;
-        uint64_t b_thing;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyPOD& out) {
-        return r.read_raw(out);
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyPOD& in) {
-        return w.write_raw(in);
-    }
-    
     struct MyFlags {
         uint8_t value{};
         inline uint8_t get_is_thing() const { return static_cast<uint8_t>((value >> 0) & (1ULL)); }
@@ -89,6 +77,18 @@ namespace basic {
     }
     template <typename Writer> inline bool write(Writer& w, const MyFlags& in) {
         return detail::write_raw(w, in.value);
+    }
+    
+    struct MyPOD {
+        uint8_t a_thing;
+        uint64_t b_thing;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, MyPOD& out) {
+        return r.read_raw(out);
+    }
+    template <typename Writer> inline bool write(Writer& w, const MyPOD& in) {
+        return w.write_raw(in);
     }
     
     struct SmallSeq {
