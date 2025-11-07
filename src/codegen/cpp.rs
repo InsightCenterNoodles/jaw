@@ -71,11 +71,7 @@ impl<'a> CppEmitter<'a> {
         self.wln("#include <span>");
         self.wln("");
         self.wln("// Reader/Writer requirements:");
-        self.wln("// bool write_{u|i}{8|16|32|64}(T)");
-        self.wln("// bool write_{f}{32|64}(T)");
         self.wln("// bool write_raw(T const&)");
-        self.wln("// bool  read_{u|i}{8|16|32|64}(T&)");
-        self.wln("// bool  read_{f}{32|64}(T&)");
         self.wln("// bool  read_raw(T&)");
         self.wln("// C++20 required (std::span, std::variant). Endianness left to Reader/Writer.");
         self.wln("");
@@ -83,7 +79,6 @@ impl<'a> CppEmitter<'a> {
         self.indent();
         self.wln("namespace detail {");
         self.indent();
-        // Helpers for primitives
         self.wln("template <typename Reader, typename T> inline bool read_raw(Reader& r, T& v) { return r.read_raw(v); }");
         self.wln("");
         self.wln("template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }");
