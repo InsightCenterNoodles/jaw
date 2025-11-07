@@ -2,13 +2,18 @@ use crate::{module::*, tokens::Span};
 use std::fmt::Write;
 
 // Public entry: emit a single header string with all types and read/write helpers
-pub fn emit_cpp_header(module: Module, mut file: impl std::io::Write) -> std::io::Result<()> {
+pub fn emit_cpp_header(
+    module: Module,
+    mut file: impl std::io::Write,
+) -> Result<(), super::GeneratorError> {
     let mut e = CppEmitter::new(&module);
     e.emit_preamble();
     e.emit_all_types();
     let string = e.finish();
 
-    file.write_all(string.as_bytes())
+    file.write_all(string.as_bytes())?;
+
+    Ok(())
 }
 
 struct CppEmitter<'a> {
