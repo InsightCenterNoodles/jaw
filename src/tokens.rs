@@ -86,9 +86,6 @@ pub struct Token {
 
 #[derive(Debug, Error)]
 pub enum LexError {
-    #[error("lexer error {0}")]
-    LexErr(String),
-
     #[error("lexer error {0} at {1:?}")]
     LexErrLoc(String, Span),
 

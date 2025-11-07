@@ -6,6 +6,7 @@ use crate::module::Module;
 
 mod cpp;
 mod python;
+mod common;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum KnownGenerators {
