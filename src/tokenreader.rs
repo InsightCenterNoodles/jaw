@@ -41,10 +41,20 @@ impl TokenReader {
     }
 
     pub fn demand_number(&mut self) -> Result<(i64, Span), ModuleBuildError> {
+        // Optionally consume a leading minus and then a number token.
+        let mut is_neg = false;
+        let mut start_span: Option<Span> = None;
+
+        if let Some(tok) = self.tokens.peek() {
+            if let TokenKind::Symbol(Symbol::Minus) = tok.kind {
+                // consume '-'
+                let t = self.tokens.next().expect("peeked token disappeared");
+                start_span = Some(t.span);
+                is_neg = true;
+            }
+        }
+
         let token = self.demand_next()?;
-
-        let is_neg = self.request_symbols(&[Symbol::Minus]).is_some();
-
         let TokenKind::Number(x) = token.kind else {
             return Err(self.make_unexpected("number", token));
         };
@@ -53,7 +63,8 @@ impl TokenReader {
             .try_into()
             .map_err(|_| ModuleBuildError::Internal("failed to parse integer literal".to_string()))?;
 
-        Ok((if is_neg { -x } else { x }, token.span))
+        let span = if let Some(s) = start_span { s.union(&token.span) } else { token.span };
+        Ok((if is_neg { -x } else { x }, span))
     }
 
     pub fn demand_identifier(&mut self) -> Result<(String, Span), ModuleBuildError> {
@@ -79,7 +90,7 @@ impl TokenReader {
         let token = self.demand_next()?;
         match token.kind {
             TokenKind::FatArrow => Ok(()),
-            _ => Err(self.make_unexpected("'=>", token)),
+            _ => Err(self.make_unexpected("'=>'", token)),
         }
     }
 

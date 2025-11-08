@@ -297,23 +297,24 @@ impl<'a> CppEmitter<'a> {
                 self.e.wln("if (!detail::read_raw(r, tag)) return false;");
                 self.e.wln("switch (static_cast<decltype(tag)>(tag)) {");
                 self.e.indent();
-                for (val, vt) in &v.members {
+                for (idx, (val, vt)) in v.members.iter().enumerate() {
                     self.e.wln(&format!("case {}: {{", val));
                     self.e.indent();
                     let val_cpp = self.cpp_type_owned(*vt);
-                    self.e.wln(&format!("{}& tmp = out.value.emplace<{}>();", val_cpp, val));
+                    self.e.wln(&format!("{}& tmp = out.value.emplace<{}>();", val_cpp, idx));
                     self.emit_read_member(*vt, "tmp");
                     self.e.wln("return true;");
                     self.e.dedent();
                     self.e.wln("}");
                 }
-                if let Some((dfval, dftid)) = &v.default {
+                if let Some((_, dftid)) = &v.default {
+                    let default_index = v.members.len();
                     self.e.wln("default: {");
                     self.e.indent();
                     let val_cpp = self.cpp_type_owned(*dftid);
                     self.e.wln(&format!(
                         "{}& tmp = out.value.emplace<{}>();",
-                        val_cpp, dfval
+                        val_cpp, default_index
                     ));
                     self.emit_read_member(*dftid, "tmp");
                     self.e.wln("return true;");
@@ -361,32 +362,48 @@ impl<'a> CppEmitter<'a> {
                 self.e.wln("return true;");
             }
             TypeKind::Variant(v) => {
-                // Write tag then payload matching active alternative
+                // Write tag then payload matching active alternative (map index -> discriminant)
                 let ty = self.cpp_primitive(&v.ty);
-                self.e.wln(&format!("{} tag = in.value.index();", ty));
-                self.e.wln("if (!detail::write_raw(w, tag)) return false;");
-                self.e.wln("switch (tag) {");
+                self.e.wln("size_t __idx = in.value.index();");
+                self.e.wln(&format!("{} tag{{}};", ty));
+                self.e.wln("switch (__idx) {");
                 self.e.indent();
-                for (val, vt) in &v.members {
-                    self.e.wln(&format!("case {}: {{", val));
+                for (idx, (val, _vt)) in v.members.iter().enumerate() {
+                    self.e.wln(&format!("case {}: tag = static_cast<{}>({}); break;", idx, ty, val));
+                }
+                if let Some((dfval, _)) = &v.default {
+                    let default_index = v.members.len();
+                    self.e.wln(&format!(
+                        "case {}: tag = static_cast<{}>({}); break;",
+                        default_index, ty, dfval
+                    ));
+                }
+                self.e.wln("default: return false;");
+                self.e.dedent();
+                self.e.wln("}");
+                self.e.wln("if (!detail::write_raw(w, tag)) return false;");
+                self.e.wln("switch (__idx) {");
+                self.e.indent();
+                for (idx, (_val, vt)) in v.members.iter().enumerate() {
+                    self.e.wln(&format!("case {}: {{", idx));
                     self.e.indent();
-                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", val));
+                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", idx));
                     self.emit_write_member(*vt, "ptr");
                     self.e.wln("return true;");
                     self.e.dedent();
                     self.e.wln("}");
                 }
-                if let Some((dfval, dftid)) = &v.default {
-                    self.e.wln("default: {");
+                if let Some((_dfval, dftid)) = &v.default {
+                    let default_index = v.members.len();
+                    self.e.wln(&format!("case {}: {{", default_index));
                     self.e.indent();
-                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", dfval));
+                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", default_index));
                     self.emit_write_member(*dftid, "ptr");
                     self.e.wln("return true;");
                     self.e.dedent();
                     self.e.wln("}");
-                } else {
-                    self.e.wln("default: return false;");
                 }
+                self.e.wln("default: return false;");
                 self.e.dedent();
                 self.e.wln("}");
                 self.e.wln("return true;");
@@ -415,32 +432,48 @@ impl<'a> CppEmitter<'a> {
                 self.e.wln("return true;");
             }
             TypeKind::Variant(v) => {
-                // Write tag then payload matching active alternative
+                // Write tag then payload matching active alternative (view: pointers)
                 let ty = self.cpp_primitive(&v.ty);
-                self.e.wln(&format!("{} tag = in.value.index();", ty));
-                self.e.wln("if (!detail::write_raw(w, tag)) return false;");
-                self.e.wln("switch (tag) {");
+                self.e.wln("size_t __idx = in.value.index();");
+                self.e.wln(&format!("{} tag{{}};", ty));
+                self.e.wln("switch (__idx) {");
                 self.e.indent();
-                for (val, vt) in &v.members {
-                    self.e.wln(&format!("case {}: {{", val));
+                for (idx, (val, _vt)) in v.members.iter().enumerate() {
+                    self.e.wln(&format!("case {}: tag = static_cast<{}>({}); break;", idx, ty, val));
+                }
+                if let Some((dfval, _)) = &v.default {
+                    let default_index = v.members.len();
+                    self.e.wln(&format!(
+                        "case {}: tag = static_cast<{}>({}); break;",
+                        default_index, ty, dfval
+                    ));
+                }
+                self.e.wln("default: return false;");
+                self.e.dedent();
+                self.e.wln("}");
+                self.e.wln("if (!detail::write_raw(w, tag)) return false;");
+                self.e.wln("switch (__idx) {");
+                self.e.indent();
+                for (idx, (_val, vt)) in v.members.iter().enumerate() {
+                    self.e.wln(&format!("case {}: {{", idx));
                     self.e.indent();
-                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", val));
+                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", idx));
                     self.emit_write_member(*vt, "*ptr");
                     self.e.wln("return true;");
                     self.e.dedent();
                     self.e.wln("}");
                 }
-                if let Some((dfval, dftid)) = &v.default {
-                    self.e.wln("default: {");
+                if let Some((_dfval, dftid)) = &v.default {
+                    let default_index = v.members.len();
+                    self.e.wln(&format!("case {}: {{", default_index));
                     self.e.indent();
-                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", dfval));
+                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", default_index));
                     self.emit_write_member(*dftid, "*ptr");
                     self.e.wln("return true;");
                     self.e.dedent();
                     self.e.wln("}");
-                } else {
-                    self.e.wln("default: return false;");
                 }
+                self.e.wln("default: return false;");
                 self.e.dedent();
                 self.e.wln("}");
                 self.e.wln("return true;");

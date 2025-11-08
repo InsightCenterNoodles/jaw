@@ -1,15 +1,14 @@
-use std::{fmt::Display, path::Path};
+use std::{fmt::Display, iter::Peekable, path::Path};
 
 use thiserror::Error;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
-    pub line: usize,
-    pub column: usize,
+    pub offset: usize,
 }
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(line {} column {})", self.line, self.column)
+        write!(f, "(offset {})", self.offset)
     }
 }
 
@@ -95,27 +94,43 @@ pub enum LexError {
 
 pub fn lex_path(path: &Path) -> Result<Vec<Token>, LexError> {
     let source = std::fs::read_to_string(path)?;
-    Lexer::new(&source).collect_tokens().map_err(Into::into)
+
+    Lexer::new(source.char_indices())
+        .collect_tokens()
+        .map_err(Into::into)
 }
 
 pub fn lex_str(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).collect_tokens()
+    Lexer::new(source.char_indices()).collect_tokens()
 }
 
-struct Lexer<'a> {
-    source: std::borrow::Cow<'a, str>,
-    cursor: usize,
-    line: usize,
-    column: usize,
+#[derive(Debug, Default, Clone)]
+struct Char(char, Position);
+
+impl Char {
+    #[inline]
+    fn is_char(&self, c: char) -> bool {
+        self.0 == c
+    }
 }
 
-impl<'a> Lexer<'a> {
-    fn new(source: &'a str) -> Self {
+struct Lexer<T>
+where
+    T: Iterator<Item = (usize, char)>,
+{
+    source: Peekable<T>,
+    last: Char,
+}
+
+impl<T> Lexer<T>
+where
+    T: Iterator<Item = (usize, char)>,
+    T:,
+{
+    fn new(source: T) -> Self {
         Self {
-            source: source.into(),
-            cursor: 0,
-            line: 1,
-            column: 1,
+            source: source.peekable(),
+            last: Char::default(),
         }
     }
 
@@ -134,7 +149,7 @@ impl<'a> Lexer<'a> {
                 break;
             };
 
-            if ch == '\n' {
+            if ch.is_char('\n') {
                 let start = self.position();
                 self.bump();
                 tokens.push(Token {
@@ -144,17 +159,17 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            if ch.is_ascii_digit() {
+            if ch.0.is_ascii_digit() {
                 tokens.push(self.lex_number()?);
                 continue;
             }
 
-            if is_ident_start(ch) {
+            if is_ident_start(ch.0) {
                 tokens.push(self.lex_identifier_or_keyword()?);
                 continue;
             }
 
-            if ch == '"' {
+            if ch.is_char('"') {
                 tokens.push(self.lex_string()?);
                 continue;
             }
@@ -167,20 +182,13 @@ impl<'a> Lexer<'a> {
 
     fn skip_trivia(&mut self) {
         loop {
-            let mut consumed = false;
+            let mut consumed = self.skip_while(|x| matches!(x, ' ' | '\t' | '\r'));
 
-            while matches!(self.peek_char(), Some(' ' | '\t' | '\r')) {
+            if self.peek_check_char('/') == Some(true) && self.peek_next_char('/') == Some(true) {
+                self.bump(); // remove both slash
                 self.bump();
-                consumed = true;
-            }
 
-            if self.peek_char() == Some('/') && self.peek_next_char() == Some('/') {
-                self.bump();
-                self.bump();
-                while !matches!(self.peek_char(), None | Some('\n')) {
-                    self.bump();
-                }
-                consumed = true;
+                consumed = consumed || self.skip_while(|x| !matches!(x, '\n'));
             }
 
             if !consumed {
@@ -194,8 +202,8 @@ impl<'a> Lexer<'a> {
         let mut literal = String::new();
 
         while let Some(ch) = self.peek_char() {
-            if ch.is_ascii_digit() {
-                literal.push(ch);
+            if ch.0.is_ascii_digit() {
+                literal.push(ch.0);
                 self.bump();
             } else {
                 break;
@@ -217,8 +225,8 @@ impl<'a> Lexer<'a> {
         let mut ident = String::new();
 
         while let Some(ch) = self.peek_char() {
-            if is_ident_continue(ch) {
-                ident.push(ch);
+            if is_ident_continue(ch.0) {
+                ident.push(ch.0);
                 self.bump();
             } else {
                 break;
@@ -250,7 +258,7 @@ impl<'a> Lexer<'a> {
         let mut literal = String::new();
 
         while let Some(ch) = self.peek_char() {
-            match ch {
+            match ch.0 {
                 '"' => {
                     self.bump();
                     let span = self.span_from(start);
@@ -274,9 +282,9 @@ impl<'a> Lexer<'a> {
                         ));
                     };
 
-                    match next {
+                    match next.0 {
                         '\\' | '"' => {
-                            literal.push(next);
+                            literal.push(next.0);
                             self.bump();
                         }
                         'n' => {
@@ -296,7 +304,7 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 _ => {
-                    literal.push(ch);
+                    literal.push(ch.0);
                     self.bump();
                 }
             }
@@ -317,8 +325,8 @@ impl<'a> Lexer<'a> {
             ));
         };
 
-        if ch == '=' && self.peek_next_char() == Some('>') {
-            self.bump();
+        if ch.0 == '=' && self.peek_next_char('>') == Some(true) {
+            // '=' was consumed by peek_next_char; consume only the '>'
             self.bump();
             return Ok(Token {
                 kind: TokenKind::FatArrow,
@@ -326,7 +334,7 @@ impl<'a> Lexer<'a> {
             });
         }
 
-        let kind = match ch {
+        let kind = match ch.0 {
             ':' => TokenKind::Symbol(Symbol::Colon),
             '-' => TokenKind::Symbol(Symbol::Minus),
             '=' => TokenKind::Symbol(Symbol::Equals),
@@ -339,7 +347,7 @@ impl<'a> Lexer<'a> {
             '*' => TokenKind::Symbol(Symbol::Asterisk),
             _ => {
                 return Err(LexError::LexErrLoc(
-                    format!("unexpected character '{}'", ch),
+                    format!("unexpected character '{}'", ch.0),
                     self.span_from(start),
                 ));
             }
@@ -354,38 +362,49 @@ impl<'a> Lexer<'a> {
     }
 
     fn position(&self) -> Position {
-        Position {
-            line: self.line,
-            column: self.column,
-        }
+        self.last.1
     }
 
     fn span_from(&self, start: Position) -> Span {
         Span::Source(start, self.position())
     }
 
-    fn bump(&mut self) -> Option<char> {
-        let ch = self.peek_char()?;
+    fn bump(&mut self) -> Option<Char> {
+        let ch = self.source.next()?;
 
-        self.cursor += ch.len_utf8();
-        if ch == '\n' {
-            self.line += 1;
-            self.column = 1;
-        } else {
-            self.column += 1;
+        self.last = Char(ch.1, Position { offset: ch.0 });
+
+        Some(self.last.clone())
+    }
+
+    fn peek_char(&mut self) -> Option<Char> {
+        self.source
+            .peek()
+            .map(|x| Char(x.1, Position { offset: x.0 }))
+    }
+
+    fn peek_check_char(&mut self, c: char) -> Option<bool> {
+        self.source.peek().map(|x| x.1 == c)
+    }
+
+    /// Consumes current char and peeks the next to see if it matches the given char
+    fn peek_next_char(&mut self, check: char) -> Option<bool> {
+        self.bump()?;
+        self.peek_char().map(|x| x.is_char(check))
+    }
+
+    fn skip_while<F: FnMut(char) -> bool>(&mut self, mut predicate: F) -> bool {
+        let mut did_skip = false;
+
+        while let Some(x) = self.peek_char() {
+            if predicate(x.0) {
+                did_skip = true;
+                continue;
+            }
+            break;
         }
 
-        Some(ch)
-    }
-
-    fn peek_char(&self) -> Option<char> {
-        self.source[self.cursor..].chars().next()
-    }
-
-    fn peek_next_char(&self) -> Option<char> {
-        let mut iter = self.source[self.cursor..].chars();
-        iter.next()?;
-        iter.next()
+        did_skip
     }
 }
 
