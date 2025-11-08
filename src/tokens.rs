@@ -95,9 +95,7 @@ pub enum LexError {
 pub fn lex_path(path: &Path) -> Result<Vec<Token>, LexError> {
     let source = std::fs::read_to_string(path)?;
 
-    Lexer::new(source.char_indices())
-        .collect_tokens()
-        .map_err(Into::into)
+    Lexer::new(source.char_indices()).collect_tokens()
 }
 
 pub fn lex_str(source: &str) -> Result<Vec<Token>, LexError> {

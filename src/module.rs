@@ -277,6 +277,7 @@ impl PartialModule {
             .and_then(|x| x.to_str())
             .unwrap_or("module")
             .to_string();
+
         let mut module = PartialModule {
             name: file_stem,
             type_map: Default::default(),
@@ -287,6 +288,38 @@ impl PartialModule {
         module.add_builtins();
 
         let tokens = tokens::lex_path(path)?.into_iter().peekable();
+
+        let mut reader = TokenReader::new(tokens);
+
+        while let Some((keyword, _)) = reader.scan_to_next_kw() {
+            match keyword {
+                Keyword::Pack => parse_pack(&mut module, &mut reader),
+                Keyword::Enum => parse_enum(&mut module, &mut reader),
+                Keyword::Bits => parse_bits(&mut module, &mut reader),
+                Keyword::Variant => parse_variant(&mut module, &mut reader),
+                Keyword::Seq => parse_seq(&mut module, &mut reader),
+                Keyword::Alias => todo!(),
+                Keyword::Use => todo!(),
+                Keyword::As => todo!(),
+            }?;
+        }
+
+        module.validate()?;
+
+        Ok(module)
+    }
+
+    pub fn from_string(source: &str) -> Result<Self> {
+        let mut module = PartialModule {
+            name: "string".into(),
+            type_map: Default::default(),
+            types: Default::default(),
+            last_tid: 0,
+        };
+
+        module.add_builtins();
+
+        let tokens = tokens::lex_str(source)?.into_iter().peekable();
 
         let mut reader = TokenReader::new(tokens);
 

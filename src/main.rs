@@ -1,13 +1,8 @@
-mod codegen;
-mod module;
-mod tokenreader;
-mod tokens;
+use jaw::prelude::*;
 
 use std::path::PathBuf;
 
 use clap::Parser;
-
-use crate::codegen::KnownGenerators;
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
@@ -26,12 +21,12 @@ struct Arguments {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Arguments::parse();
 
-    let module = module::PartialModule::from_file(&args.input)?;
+    let module = PartialModule::from_file(&args.input)?;
     let module = module.compile();
 
     let output = std::io::BufWriter::new(std::fs::File::create(args.output)?);
 
-    codegen::emit_for(args.kind, module, output)?;
+    emit_for(args.kind, module, output)?;
 
     Ok(())
 }

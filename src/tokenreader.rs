@@ -59,11 +59,15 @@ impl TokenReader {
             return Err(self.make_unexpected("number", token));
         };
 
-        let x: i64 = x
-            .try_into()
-            .map_err(|_| ModuleBuildError::Internal("failed to parse integer literal".to_string()))?;
+        let x: i64 = x.try_into().map_err(|_| {
+            ModuleBuildError::Internal("failed to parse integer literal".to_string())
+        })?;
 
-        let span = if let Some(s) = start_span { s.union(&token.span) } else { token.span };
+        let span = if let Some(s) = start_span {
+            s.union(&token.span)
+        } else {
+            token.span
+        };
         Ok((if is_neg { -x } else { x }, span))
     }
 
@@ -107,18 +111,18 @@ impl TokenReader {
         Ok(())
     }
 
-    pub fn demand_symbols(&mut self, syms: &[Symbol]) -> Result<Symbol, ModuleBuildError> {
-        let token = self.demand_next()?;
-        let TokenKind::Symbol(x) = token.kind else {
-            return Err(self.make_unexpected("symbol", token));
-        };
+    // pub fn demand_symbols(&mut self, syms: &[Symbol]) -> Result<Symbol, ModuleBuildError> {
+    //     let token = self.demand_next()?;
+    //     let TokenKind::Symbol(x) = token.kind else {
+    //         return Err(self.make_unexpected("symbol", token));
+    //     };
 
-        if !syms.contains(&x) {
-            return Err(self.make_unexpected(&format!("one of '{syms:?}'"), token));
-        }
+    //     if !syms.contains(&x) {
+    //         return Err(self.make_unexpected(&format!("one of '{syms:?}'"), token));
+    //     }
 
-        Ok(x)
-    }
+    //     Ok(x)
+    // }
 
     pub fn request_symbols(&mut self, syms: &[Symbol]) -> Option<Symbol> {
         let token = self.tokens.peek()?;
