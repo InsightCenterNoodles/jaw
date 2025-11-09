@@ -1,19 +1,28 @@
+//! Small helper around a `Peekable` token iterator used by the parser.
+//!
+//! This provides ergonomic methods to demand specific token kinds and
+//! produce consistent `ModuleBuildError`s with spans when expectations are not met.
+
 use crate::module::ModuleBuildError;
 use crate::tokens::{Keyword, Span, Symbol, Token, TokenKind};
 
+/// Thin wrapper over a token stream with convenience methods for parsing.
 pub struct TokenReader {
     tokens: std::iter::Peekable<std::vec::IntoIter<Token>>,
 }
 
 impl TokenReader {
+    /// Construct a reader from a peekable token iterator.
     pub fn new(tokens: std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
         Self { tokens }
     }
 
+    /// Current span based on the next token in the stream.
     pub fn current_span(&mut self) -> Span {
         self.tokens.peek().map(|x| x.span).unwrap_or_default()
     }
 
+    /// Helper to construct a standardized "unexpected token" error.
     pub fn make_unexpected(&self, wanted: &str, found: Token) -> ModuleBuildError {
         ModuleBuildError::UnexpectedToken {
             expected: wanted.to_string(),
@@ -21,6 +30,8 @@ impl TokenReader {
         }
     }
 
+    /// Advance to the next keyword token, skipping newlines. Returns `None` if
+    /// a non-newline, non-keyword token is encountered first or the stream ends.
     pub fn scan_to_next_kw(&mut self) -> Option<(Keyword, Span)> {
         loop {
             let next = self.tokens.next()?;
@@ -36,10 +47,13 @@ impl TokenReader {
         }
     }
 
+    /// Take the next token or return `UnexpectedEOF`.
     pub fn demand_next(&mut self) -> Result<Token, ModuleBuildError> {
         self.tokens.next().ok_or(ModuleBuildError::UnexpectedEOF)
     }
 
+    /// Parse an optional `-` followed by a number token and return the signed value
+    /// and the covering span. Fails if the next token is not a number.
     pub fn demand_number(&mut self) -> Result<(i64, Span), ModuleBuildError> {
         // Optionally consume a leading minus and then a number token.
         let mut is_neg = false;
@@ -71,6 +85,7 @@ impl TokenReader {
         Ok((if is_neg { -x } else { x }, span))
     }
 
+    /// Take and return an identifier token.
     pub fn demand_identifier(&mut self) -> Result<(String, Span), ModuleBuildError> {
         let token = self.demand_next()?;
         let TokenKind::Identifier(x) = token.kind else {
@@ -80,6 +95,7 @@ impl TokenReader {
         Ok((x, token.span))
     }
 
+    /// Demand a newline or EOF token.
     pub fn demand_newline(&mut self) -> Result<Span, ModuleBuildError> {
         let token = self.demand_next()?;
         match token.kind {
@@ -90,6 +106,7 @@ impl TokenReader {
         Ok(token.span)
     }
 
+    /// Demand the special `=>` fat arrow token.
     pub fn demand_fat_arrow(&mut self) -> Result<(), ModuleBuildError> {
         let token = self.demand_next()?;
         match token.kind {
@@ -98,6 +115,7 @@ impl TokenReader {
         }
     }
 
+    /// Demand a specific symbol token.
     pub fn demand_symbol(&mut self, sym: Symbol) -> Result<(), ModuleBuildError> {
         let token = self.demand_next()?;
         let TokenKind::Symbol(x) = token.kind else {
@@ -124,6 +142,7 @@ impl TokenReader {
     //     Ok(x)
     // }
 
+    /// Peek and request one of a set of allowed symbols without consuming it.
     pub fn request_symbols(&mut self, syms: &[Symbol]) -> Option<Symbol> {
         let token = self.tokens.peek()?;
 

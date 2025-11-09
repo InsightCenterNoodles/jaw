@@ -1,3 +1,14 @@
+//! jaw: a small DSL for describing binary message layouts and generating code.
+//!
+//! Crate layout
+//! - `tokens`: the tokenizer (lexer) that turns source text into tokens with spans
+//! - `tokenreader`: thin helper for consuming tokens ergonomically in the parser
+//! - `module`: parser + validation that builds a typed intermediate representation
+//! - `codegen`: backends for C++ and Python
+//!
+//! Most consumers interact with the CLI binary, but the `prelude` below exposes
+//! common types for embedding.
+
 mod codegen;
 mod module;
 mod tokenreader;

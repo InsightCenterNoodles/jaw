@@ -1,7 +1,17 @@
+//! Tokenizer for the `.jaw` DSL.
+//!
+//! Responsibilities
+//! - Skip trivia (spaces, tabs, carriage returns) and line comments (`// ...`).
+//! - Emit `Newline` tokens for `\n` and a final `EndOfFile` token.
+//! - Recognize keywords, identifiers, integer literals, string literals,
+//!   symbols, and the fat arrow (`=>`).
+//! - Note: a leading minus is its own symbol; negatives are handled by the parser.
+
 use std::{fmt::Display, iter::Peekable};
 
 use thiserror::Error;
 
+/// Byte offset within the source text.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub offset: usize,
@@ -12,6 +22,7 @@ impl Display for Position {
     }
 }
 
+/// Span identifies a half-open byte range within the source.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Span {
     #[default]
@@ -20,6 +31,8 @@ pub enum Span {
 }
 
 impl Span {
+    /// Merge two spans into a single one covering from the start of `self`
+    /// to the end of `other`. Builtin spans are ignored.
     pub fn union(&self, other: &Span) -> Span {
         match (self, other) {
             (Span::Builtin, Span::Builtin) => Span::Builtin,
@@ -39,6 +52,7 @@ impl Display for Span {
     }
 }
 
+/// All reserved keywords in the language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keyword {
     Pack,
@@ -51,6 +65,7 @@ pub enum Keyword {
     As,
 }
 
+/// Punctuation and single-char symbols recognized by the lexer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Symbol {
     Colon,
@@ -65,6 +80,7 @@ pub enum Symbol {
     Asterisk,
 }
 
+/// All token variants emitted by the lexer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     Keyword(Keyword),
@@ -77,12 +93,14 @@ pub enum TokenKind {
     EndOfFile,
 }
 
+/// A token together with its span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
 }
 
+/// Errors raised by the lexer with a note and location.
 #[derive(Debug, Error)]
 pub enum LexError {
     #[error("lexer error {0} at {1:?}")]
@@ -92,6 +110,12 @@ pub enum LexError {
     IO(#[from] std::io::Error),
 }
 
+/// Tokenize a source string into a list of tokens with spans.
+///
+/// Behavior highlights:
+/// - Skips spaces, tabs, `\r`, and `//` comments.
+/// - Emits `Newline` tokens for `\n` and a trailing `EndOfFile`.
+/// - A leading minus is separate from numbers.
 pub fn lex_str(source: &str) -> Result<Vec<Token>, LexError> {
     Lexer::new(source.char_indices()).collect_tokens()
 }
@@ -117,7 +141,6 @@ where
 impl<T> Lexer<T>
 where
     T: Iterator<Item = (usize, char)>,
-    T:,
 {
     fn new(source: T) -> Self {
         Self {
@@ -176,11 +199,11 @@ where
         loop {
             let mut consumed = self.skip_while(|x| matches!(x, ' ' | '\t' | '\r'));
 
-            if self.peek_check_char('/') == Some(true) && self.peek_next_char('/') == Some(true) {
-                self.bump(); // remove both slash
+            if self.peek_check_char('#') == Some(true) {
+                // consume and then the rest of the line
                 self.bump();
-
-                consumed = consumed || self.skip_while(|x| !matches!(x, '\n'));
+                consumed = true;
+                self.skip_while(|x| x != '\n');
             }
 
             if !consumed {
@@ -317,13 +340,22 @@ where
             ));
         };
 
-        if ch.0 == '=' && self.peek_next_char('>') == Some(true) {
-            // '=' was consumed by peek_next_char; consume only the '>'
+        if ch.0 == '=' {
             self.bump();
-            return Ok(Token {
-                kind: TokenKind::FatArrow,
-                span: self.span_from(start),
-            });
+
+            if self.peek_check_char('>') == Some(true) {
+                // consume '=' and '>'
+                self.bump();
+                return Ok(Token {
+                    kind: TokenKind::FatArrow,
+                    span: self.span_from(start),
+                });
+            } else {
+                return Ok(Token {
+                    kind: TokenKind::Symbol(Symbol::Equals),
+                    span: self.span_from(start),
+                });
+            }
         }
 
         let kind = match ch.0 {
@@ -379,18 +411,13 @@ where
         self.source.peek().map(|x| x.1 == c)
     }
 
-    /// Consumes current char and peeks the next to see if it matches the given char
-    fn peek_next_char(&mut self, check: char) -> Option<bool> {
-        self.bump()?;
-        self.peek_char().map(|x| x.is_char(check))
-    }
-
     fn skip_while<F: FnMut(char) -> bool>(&mut self, mut predicate: F) -> bool {
         let mut did_skip = false;
 
         while let Some(x) = self.peek_char() {
             if predicate(x.0) {
                 did_skip = true;
+                self.bump();
                 continue;
             }
             break;
@@ -411,6 +438,7 @@ fn is_ident_continue(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use itertools::Itertools;
 
     #[test]
     fn lexes_example_pack() {
@@ -442,5 +470,134 @@ pack MyPOD
         ];
 
         itertools::assert_equal(iter, truth.into_iter());
+    }
+
+    #[test]
+    fn lexes_keywords_and_identifiers() {
+        let src = "pack enum bits variant seq alias use as _id id1\n";
+        let kinds = lex_str(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect_vec();
+        let expect = vec![
+            TokenKind::Keyword(Keyword::Pack),
+            TokenKind::Keyword(Keyword::Enum),
+            TokenKind::Keyword(Keyword::Bits),
+            TokenKind::Keyword(Keyword::Variant),
+            TokenKind::Keyword(Keyword::Seq),
+            TokenKind::Keyword(Keyword::Alias),
+            TokenKind::Keyword(Keyword::Use),
+            TokenKind::Keyword(Keyword::As),
+            TokenKind::Identifier("_id".into()),
+            TokenKind::Identifier("id1".into()),
+            TokenKind::Newline,
+            TokenKind::EndOfFile,
+        ];
+        itertools::assert_equal(kinds, expect);
+    }
+
+    #[test]
+    fn lexes_numbers_and_minus_split() {
+        let src = "-123 456\n";
+        let kinds = lex_str(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect_vec();
+        let expect = vec![
+            TokenKind::Symbol(Symbol::Minus),
+            TokenKind::Number(123),
+            TokenKind::Number(456),
+            TokenKind::Newline,
+            TokenKind::EndOfFile,
+        ];
+        itertools::assert_equal(kinds, expect);
+    }
+
+    #[test]
+    fn lexes_string_with_escapes() {
+        let src = "\"a\\n\\t\\\\\\\"b\"\n";
+        let toks = lex_str(src).unwrap();
+        assert!(matches!(toks[0].kind, TokenKind::StringLiteral(_)));
+        if let TokenKind::StringLiteral(s) = toks[0].kind.clone() {
+            assert_eq!(s, "a\n\t\\\"b");
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn string_errors() {
+        // Unterminated
+        let unterminated = lex_str("\"abc");
+        assert!(matches!(unterminated, Err(LexError::LexErrLoc(_, _))));
+
+        // Invalid escape
+        let bad_escape = lex_str("\"\\x\"");
+        assert!(matches!(bad_escape, Err(LexError::LexErrLoc(_, _))));
+    }
+
+    #[test]
+    fn lexes_symbols_and_fat_arrow() {
+        let src = "=>:=-()[]{}*\n";
+        let kinds = lex_str(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect_vec();
+        let expect = vec![
+            TokenKind::FatArrow,
+            TokenKind::Symbol(Symbol::Colon),
+            TokenKind::Symbol(Symbol::Equals),
+            TokenKind::Symbol(Symbol::Minus),
+            TokenKind::Symbol(Symbol::LParen),
+            TokenKind::Symbol(Symbol::RParen),
+            TokenKind::Symbol(Symbol::LBracket),
+            TokenKind::Symbol(Symbol::RBracket),
+            TokenKind::Symbol(Symbol::LBrace),
+            TokenKind::Symbol(Symbol::RBrace),
+            TokenKind::Symbol(Symbol::Asterisk),
+            TokenKind::Newline,
+            TokenKind::EndOfFile,
+        ];
+        itertools::assert_equal(kinds, expect);
+    }
+
+    #[test]
+    fn skips_comments() {
+        let src = "pack X # comment\ny\n# another comment\n";
+        let kinds = lex_str(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect_vec();
+        let expect = vec![
+            TokenKind::Keyword(Keyword::Pack),
+            TokenKind::Identifier("X".into()),
+            TokenKind::Newline,
+            TokenKind::Identifier("y".into()),
+            TokenKind::Newline,
+            TokenKind::Newline,
+            TokenKind::EndOfFile,
+        ];
+        itertools::assert_equal(kinds, expect);
+    }
+
+    #[test]
+    fn eof_on_empty_input() {
+        let kinds = lex_str("")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect_vec();
+        let expect = vec![TokenKind::EndOfFile];
+        itertools::assert_equal(kinds, expect);
+    }
+
+    #[test]
+    fn unexpected_char_errors() {
+        let err = lex_str("@");
+        assert!(matches!(err, Err(LexError::LexErrLoc(_, _))));
     }
 }
