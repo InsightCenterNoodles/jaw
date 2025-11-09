@@ -7,11 +7,7 @@
 #include <span>
 
 // Reader/Writer requirements:
-// bool write_{u|i}{8|16|32|64}(T)
-// bool write_{f}{32|64}(T)
 // bool write_raw(T const&)
-// bool  read_{u|i}{8|16|32|64}(T&)
-// bool  read_{f}{32|64}(T&)
 // bool  read_raw(T&)
 // C++20 required (std::span, std::variant). Endianness left to Reader/Writer.
 
@@ -91,6 +87,18 @@ namespace basic {
         return w.write_raw(in);
     }
     
+    struct MyOtherPOD {
+        MyPOD first;
+        std::array<uint8_t, 4> second;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
+        return r.read_raw(out);
+    }
+    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
+        return w.write_raw(in);
+    }
+    
     struct SmallSeq {
         std::vector<float> list;
     };
@@ -130,18 +138,6 @@ namespace basic {
         return true;
     }
     
-    struct MyOtherPOD {
-        MyPOD first;
-        std::array<uint8_t, 4> second;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
-        return r.read_raw(out);
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
-        return w.write_raw(in);
-    }
-    
     struct MyVariant { std::variant<MyPOD, MyOtherPOD, SmallSeq> value; };
     struct MyVariantView { std::variant<MyPOD const* , MyOtherPOD const* , SmallSeq const* > value; };
     
@@ -168,9 +164,16 @@ namespace basic {
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const MyVariant& in) {
-        uint8_t tag = in.value.index();
+        size_t __idx = in.value.index();
+        uint8_t tag{};
+        switch (__idx) {
+            case 0: tag = static_cast<uint8_t>(0); break;
+            case 1: tag = static_cast<uint8_t>(1); break;
+            case 2: tag = static_cast<uint8_t>(2); break;
+            default: return false;
+        }
         if (!detail::write_raw(w, tag)) return false;
-        switch (tag) {
+        switch (__idx) {
             case 0: {
                 const auto& ptr = std::get<0>(in.value);
                 if (!write(w, ptr)) return false;
@@ -181,18 +184,26 @@ namespace basic {
                 if (!write(w, ptr)) return false;
                 return true;
             }
-            default: {
+            case 2: {
                 const auto& ptr = std::get<2>(in.value);
                 if (!write(w, ptr)) return false;
                 return true;
             }
+            default: return false;
         }
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const MyVariantView& in) {
-        uint8_t tag = in.value.index();
+        size_t __idx = in.value.index();
+        uint8_t tag{};
+        switch (__idx) {
+            case 0: tag = static_cast<uint8_t>(0); break;
+            case 1: tag = static_cast<uint8_t>(1); break;
+            case 2: tag = static_cast<uint8_t>(2); break;
+            default: return false;
+        }
         if (!detail::write_raw(w, tag)) return false;
-        switch (tag) {
+        switch (__idx) {
             case 0: {
                 auto ptr = std::get<0>(in.value);
                 if (!write(w, *ptr)) return false;
@@ -203,11 +214,12 @@ namespace basic {
                 if (!write(w, *ptr)) return false;
                 return true;
             }
-            default: {
+            case 2: {
                 auto ptr = std::get<2>(in.value);
                 if (!write(w, *ptr)) return false;
                 return true;
             }
+            default: return false;
         }
         return true;
     }
