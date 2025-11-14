@@ -346,7 +346,7 @@ impl<'a> RustEmitter<'a> {
         self.e.dedent();
         self.e.wln("}");
     }
-    
+
     /// Emit a borrowed view struct for a sequence.
     fn emit_sequence_view(&mut self, name: &str, s: &Sequence) {
         let rs_name = sanitize_ident(name, "T");
@@ -387,8 +387,10 @@ impl<'a> RustEmitter<'a> {
     fn emit_variant_view(&mut self, name: &str, v: &Variant) {
         let rs_name = sanitize_ident(name, "T");
         let view_name = format!("{}View", rs_name);
-        self.e
-            .wln(&format!("#[derive(Debug, Clone, Copy)] pub enum {}<'a> {{", view_name));
+        self.e.wln(&format!(
+            "#[derive(Debug, Clone, Copy)] pub enum {}<'a> {{",
+            view_name
+        ));
         self.e.indent();
         for (idx, (_val, vt)) in v.members.iter().enumerate() {
             let t = self.rust_type_for_view_field(*vt, "'a");
@@ -458,7 +460,7 @@ impl<'a> RustEmitter<'a> {
             }
             TypeKind::Sequence(s) => {
                 for (mname, mtid) in &s.members {
-                    let lhs = format!("{}", sanitize_ident(mname, "T"));
+                    let lhs = sanitize_ident(mname, "T").to_string();
                     self.emit_read_member(*mtid, &lhs);
                 }
                 self.e.wln("Ok(");

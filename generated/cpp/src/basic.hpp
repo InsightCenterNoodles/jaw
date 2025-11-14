@@ -55,18 +55,6 @@ namespace basic {
         return detail::write_raw(w, tmp);
     }
     
-    struct MyPOD {
-        uint8_t a_thing;
-        uint64_t b_thing;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyPOD& out) {
-        return r.read_raw(out);
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyPOD& in) {
-        return w.write_raw(in);
-    }
-    
     struct MyFlags {
         uint8_t value{};
         inline uint8_t get_is_thing() const { return static_cast<uint8_t>((value >> 0) & (1ULL)); }
@@ -85,6 +73,18 @@ namespace basic {
     }
     template <typename Writer> inline bool write(Writer& w, const MyFlags& in) {
         return detail::write_raw(w, in.value);
+    }
+    
+    struct MyPOD {
+        uint8_t a_thing;
+        uint64_t b_thing;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, MyPOD& out) {
+        return r.read_raw(out);
+    }
+    template <typename Writer> inline bool write(Writer& w, const MyPOD& in) {
+        return w.write_raw(in);
     }
     
     struct MyOtherPOD {

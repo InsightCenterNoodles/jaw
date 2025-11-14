@@ -644,9 +644,9 @@ impl PartialModule {
                         let underlying = self.name_and_span_for_tid(*underlying_type_id)?;
 
                         return Err(ModuleBuildError::NonIntBitfld(
-                            enum_type.0.into(),
+                            enum_type.0,
                             enum_type.1,
-                            underlying.0.into(),
+                            underlying.0,
                         ));
                     };
                     if !p.is_integer() {
@@ -654,9 +654,9 @@ impl PartialModule {
                         let underlying = self.name_and_span_for_tid(*underlying_type_id)?;
 
                         return Err(ModuleBuildError::NonIntBitfld(
-                            enum_type.0.into(),
+                            enum_type.0,
                             enum_type.1,
-                            underlying.0.into(),
+                            underlying.0,
                         ));
                     }
                     let width = p.bit_width().unwrap();
@@ -682,11 +682,7 @@ impl PartialModule {
                     if !ty.is_integer() {
                         let check = self.name_and_span_for_tid(*validating_type_id)?;
 
-                        return Err(ModuleBuildError::NonIntVariant(
-                            check.0.into(),
-                            check.1,
-                            *ty,
-                        ));
+                        return Err(ModuleBuildError::NonIntVariant(check.0, check.1, *ty));
                     }
                     // already checked its an int above.
                     // TODO: should probably collapse these checks into one
@@ -1440,4 +1436,130 @@ fn parse_seq(module: &mut PartialModule, reader: &mut TokenReader) -> Result<()>
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_ok(src: &str) -> PartialModule {
+        PartialModule::from_string("test", src).expect("parse ok")
+    }
+
+    #[test]
+    fn parses_pack_with_members() {
+        let src = r#"
+pack P
+- a : u8
+- b : i16
+"#;
+        let pm = parse_ok(src);
+        let m = pm.compile();
+
+        let tid = m.type_map.get("P").expect("type exists").0;
+        let ty = m.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Pack(Pack { members }) => {
+                assert_eq!(members.len(), 2);
+                assert_eq!(members[0].0, "a");
+                assert_eq!(members[1].0, "b");
+            }
+            _ => panic!("expected pack"),
+        }
+    }
+
+    #[test]
+    fn parses_enum_with_default() {
+        let src = r#"
+enum Color : u8
+- Red = 1
+- Blue = 2
+= Default = 2
+"#;
+        let pm = parse_ok(src);
+        let m = pm.compile();
+
+        let tid = m.type_map.get("Color").expect("type exists").0;
+        let ty = m.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Enum(Enum {
+                ty,
+                members,
+                default,
+            }) => {
+                assert!(matches!(ty, &Primitive::U8));
+                assert!(members.iter().any(|(n, v)| n == "Red" && *v == 1));
+                assert!(members.iter().any(|(n, v)| n == "Blue" && *v == 2));
+                assert!(matches!(default, Some((n, v)) if n == "Default" && *v == 2));
+            }
+            _ => panic!("expected enum"),
+        }
+    }
+
+    #[test]
+    fn enum_non_integer_base_errors() {
+        let src = r#"
+enum E : f32
+- A = 1
+"#;
+        let err = PartialModule::from_string("test", src).unwrap_err();
+        assert!(matches!(
+            err,
+            ModuleBuildError::NonIntEnum(_, _, Primitive::F32)
+        ));
+    }
+
+    #[test]
+    fn bits_member_type_must_be_primitive_or_enum() {
+        let src = r#"
+pack Foo
+- f : u8
+bits B : u8
+- 0-7 field : Foo
+"#;
+        let err = PartialModule::from_string("test", src).unwrap_err();
+        assert!(matches!(
+            err,
+            ModuleBuildError::BitfieldMemberTypeInvalid { .. }
+        ));
+    }
+
+    #[test]
+    fn variant_negative_discriminant_errors() {
+        let src = r#"
+variant V : u8
+- -1 => u8
+"#;
+        let err = PartialModule::from_string("test", src).unwrap_err();
+        assert!(matches!(err, ModuleBuildError::VariantValueNegative(_)));
+    }
+
+    #[test]
+    fn sequence_with_fixed_array_member_parses() {
+        let src = r#"
+seq S
+- items : [ 2 * u8 ]
+"#;
+        let pm = parse_ok(src);
+        let m = pm.compile();
+        let sid = m.type_map.get("S").unwrap().0;
+        let sty = m.lookup(sid).unwrap();
+        let arr_tid = match &sty.kind {
+            TypeKind::Sequence(Sequence { members }) => members[0].1,
+            _ => panic!("expected sequence"),
+        };
+        let arr_ty = m.lookup(arr_tid).unwrap();
+        match &arr_ty.kind {
+            TypeKind::FixedArray(ArrayKind::Fixed { count, value_type }) => {
+                assert_eq!(*count, 2);
+                // value_type should be the builtin u8; ensure it resolves
+                let vty = m.lookup(*value_type).unwrap();
+                match vty.kind {
+                    TypeKind::Primitive(Primitive::U8) => {}
+                    _ => panic!("expected u8 primitive"),
+                }
+            }
+            _ => panic!("expected fixed array"),
+        }
+    }
 }

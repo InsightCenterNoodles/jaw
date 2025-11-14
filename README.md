@@ -5,16 +5,17 @@ Overview
 - Parse a small DSL (`.jaw`) that describes binary message layouts
 - Validate and compile into an intermediate type graph
 - Generate reader/writer code for C++, Python, or Rust
+- Endianess is assumed to be little
 
 Quickstart
 - Build: `cargo build` (Rust 2024 edition)
-- Run: `cargo run -- <INPUT.jaw> --kind <CPP|PYTHON|RUST> <OUTPUT>`
-  - Example (Python): `cargo run -- assets/basic.jaw --kind PYTHON generated/python/basic.py`
-  - Example (C++): `cargo run -- assets/basic.jaw --kind CPP generated/cpp/src/basic.hpp`
-  - Example (Rust): `cargo run -- assets/basic.jaw --kind RUST generated/rust/basic.rs`
+- Run: `cargo run -- <INPUT.jaw> --kind <cpp|python|rust> <OUTPUT>`
+  - Example (Python): `cargo run -- assets/basic.jaw --kind python generated/python/basic.py`
+  - Example (C++): `cargo run -- assets/basic.jaw --kind cpp generated/cpp/src/basic.hpp`
+  - Example (Rust): `cargo run -- assets/basic.jaw --kind rust generated/rust/basic.rs`
 
 CLI
-- `--kind`: selects output generator. Supported: `CPP`, `PYTHON`, `RUST`.
+- `--kind`: selects output generator. Supported: `cpp`, `python`, `rust`.
 - Exit codes: non-zero on parse/validation/generation errors. Errors display spans using ariadne with helpful labels.
 
 DSL Summary
@@ -38,15 +39,15 @@ DSL Summary
 
 Lexical Notes
 - Whitespace: spaces, tabs and `\r` are ignored; newlines are significant and tokenized as `Newline`.
-- Comments: `// ...` to end-of-line are skipped (newline still tokenized).
+- Comments: `# ...` to end-of-line are skipped (newline still tokenized).
 - Numbers: only unsigned integer literals are lexed; a leading `-` is a separate token used by the parser when needed.
 - Strings: `"..."` with escapes `\\`, `\"`, `\n`, `\t`. Multiline and unknown escapes are errors.
-- Symbols: `: - = ( ) [ ] { } *` plus a special `=>` fat arrow.
+- Symbols: `: - = ( ) [ ] { } * =>`.
 
 Generated Code
-- Python: little-endian reader/writer helpers and simple data structures. See `generated/python/` examples.
-- C++: header-only types and readers/writers. Endianness is determined by the provided Reader/Writer in C++.
-- Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write` in little-endian.
+- Python: reader/writer helpers and simple data structures. See `generated/python/` examples.
+- C++: header-only types and readers/writers.
+- Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write`.
 
 Examples
 - See `assets/basic.jaw` and generated outputs under `generated/` for reference.
@@ -57,7 +58,7 @@ Developing
   - `src/tokens.rs`: tokenizer (lexer) and token definitions
   - `src/tokenreader.rs`: small helper for parser token consumption
   - `src/module.rs`: parser, validation, and type graph
-  - `src/codegen/`: C++ and Python generators
+  - `src/codegen/`: Code generators
   - `assets/`: example `.jaw` sources
 - Style: keep changes focused and small; prefer helpful error messages with spans.
 

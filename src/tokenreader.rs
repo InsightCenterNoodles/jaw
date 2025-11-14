@@ -157,3 +157,103 @@ impl TokenReader {
         Some(x)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::module::ModuleBuildError;
+    use crate::tokens::{self, Keyword, Symbol, TokenKind};
+
+    fn toks(src: &str) -> Vec<crate::tokens::Token> {
+        tokens::lex_str(src).expect("lexing failed")
+    }
+
+    #[test]
+    fn scan_to_next_kw_skips_newlines_and_stops_on_other_tokens() {
+        let t = toks("\n\npack P\n- a : u8\n");
+        let mut r = TokenReader::new(t.into_iter().peekable());
+
+        let first = r.scan_to_next_kw();
+        assert!(matches!(first, Some((Keyword::Pack, _))));
+
+        // Next non-newline token is an identifier; should stop scanning keywords
+        let second = r.scan_to_next_kw();
+        assert!(second.is_none());
+    }
+
+    #[test]
+    fn demand_number_handles_positive_and_negative_with_span_union() {
+        // Negative number: span should cover '-' and number
+        let t = toks("-123\n");
+        let expect_span = t[0].span.union(&t[1].span);
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        let (val, sp) = r.demand_number().expect("expected number");
+        assert_eq!(val, -123);
+        assert_eq!(sp, expect_span);
+
+        // Positive number: span is the number token's span
+        let t2 = toks("456\n");
+        let expect_span2 = t2[0].span;
+        let mut r2 = TokenReader::new(t2.into_iter().peekable());
+        let (val2, sp2) = r2.demand_number().expect("expected number");
+        assert_eq!(val2, 456);
+        assert_eq!(sp2, expect_span2);
+    }
+
+    #[test]
+    fn demand_number_errors_on_non_number() {
+        let t = toks("foo\n");
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        let err = r.demand_number().unwrap_err();
+        assert!(matches!(
+            err,
+            ModuleBuildError::UnexpectedToken { expected, .. } if expected == "number"
+        ));
+    }
+
+    #[test]
+    fn demand_identifier_and_newline() {
+        let t = toks("name\n");
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        let (name, _sp) = r.demand_identifier().expect("identifier");
+        assert_eq!(name, "name");
+        r.demand_newline().expect("newline");
+    }
+
+    #[test]
+    fn demand_newline_accepts_eof() {
+        let t = toks("");
+        let eof_span = t[0].span;
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        let sp = r.demand_newline().expect("newline or eof");
+        assert_eq!(sp, eof_span);
+    }
+
+    #[test]
+    fn demand_fat_arrow_and_symbol_mismatch() {
+        let t = toks("=>\n");
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        r.demand_fat_arrow().expect("fat arrow");
+
+        let t2 = toks(":\n");
+        let mut r2 = TokenReader::new(t2.into_iter().peekable());
+        let err = r2.demand_symbol(Symbol::Minus).unwrap_err();
+        assert!(matches!(
+            err,
+            ModuleBuildError::UnexpectedToken { expected, .. } if expected.contains("Minus")
+        ));
+    }
+
+    #[test]
+    fn request_symbols_peeks_without_consuming() {
+        let t = toks("- =>\n");
+        let mut r = TokenReader::new(t.into_iter().peekable());
+        assert_eq!(r.request_symbols(&[Symbol::Minus]), Some(Symbol::Minus));
+        // After consuming '-', next is identifier or fat arrow depending on spacing
+        r.demand_symbol(Symbol::Minus).unwrap();
+        // Next token isn't a Symbol::Minus anymore
+        assert_eq!(r.request_symbols(&[Symbol::Minus]), None);
+        // And fat arrow is not a Symbol token
+        assert_eq!(r.request_symbols(&[Symbol::LParen, Symbol::RParen]), None);
+    }
+}

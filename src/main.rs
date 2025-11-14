@@ -19,7 +19,7 @@ struct Arguments {
 }
 
 fn show_io_error(error: std::io::Error) {
-    eprintln!("IO error: {}", error.to_string());
+    eprintln!("IO error: {}", error);
 }
 
 fn show_error(name: &str, source: &str, error: ModuleBuildError) {
