@@ -130,14 +130,23 @@ impl<'a> RustEmitter<'a> {
                 TypeKind::Enum(e) => self.emit_enum(&name, e),
                 TypeKind::Bitfld(b) => self.emit_bitfield(&name, b),
                 TypeKind::Pack(p) => self.emit_pack(&name, p),
-                TypeKind::Sequence(s) => self.emit_sequence_type(&name, s),
-                TypeKind::Variant(v) => self.emit_variant_type(&name, v),
+                TypeKind::Sequence(s) => {
+                    self.emit_sequence_type(&name, s);
+                    self.emit_sequence_view(&name, s);
+                }
+                TypeKind::Variant(v) => {
+                    self.emit_variant_type(&name, v);
+                    self.emit_variant_view(&name, v);
+                }
                 TypeKind::Alias(_) => {}
                 TypeKind::Primitive(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {}
             }
             self.e.wln("");
             self.emit_read_fn(tid, &name);
             self.emit_write_fn(tid, &name);
+            if matches!(ty.kind, TypeKind::Sequence(_) | TypeKind::Variant(_)) {
+                self.emit_write_fn_view(tid, &name);
+            }
             self.e.wln("");
         }
 
@@ -320,6 +329,23 @@ impl<'a> RustEmitter<'a> {
         self.e.dedent();
         self.e.wln("}");
     }
+    
+    fn emit_sequence_view(&mut self, name: &str, s: &Sequence) {
+        let rs_name = sanitize_ident(name, "T");
+        let view_name = format!("{}View", rs_name);
+        self.e.wln(&format!(
+            "#[derive(Debug, Clone, Copy)] pub struct {}<'a> {{",
+            view_name
+        ));
+        self.e.indent();
+        for (mname, mtid) in &s.members {
+            let t = self.rust_type_for_view_field(*mtid, "'a");
+            self.e
+                .wln(&format!("pub {}: {},", sanitize_ident(mname, "T"), t));
+        }
+        self.e.dedent();
+        self.e.wln("}");
+    }
 
     fn emit_variant_type(&mut self, name: &str, v: &Variant) {
         let rs_name = sanitize_ident(name, "T");
@@ -332,6 +358,24 @@ impl<'a> RustEmitter<'a> {
         }
         if let Some((_dv, dt)) = &v.default {
             let t = self.rust_type_for_seq_field(*dt);
+            self.e.wln(&format!("DefaultAlt({}),", t));
+        }
+        self.e.dedent();
+        self.e.wln("}");
+    }
+
+    fn emit_variant_view(&mut self, name: &str, v: &Variant) {
+        let rs_name = sanitize_ident(name, "T");
+        let view_name = format!("{}View", rs_name);
+        self.e
+            .wln(&format!("#[derive(Debug, Clone, Copy)] pub enum {}<'a> {{", view_name));
+        self.e.indent();
+        for (idx, (_val, vt)) in v.members.iter().enumerate() {
+            let t = self.rust_type_for_view_field(*vt, "'a");
+            self.e.wln(&format!("Alt{}({}),", idx, t));
+        }
+        if let Some((_dv, dt)) = &v.default {
+            let t = self.rust_type_for_view_field(*dt, "'a");
             self.e.wln(&format!("DefaultAlt({}),", t));
         }
         self.e.dedent();
@@ -522,6 +566,63 @@ impl<'a> RustEmitter<'a> {
         self.e.wln("}");
     }
 
+    fn emit_write_fn_view(&mut self, tid: TypeID, name: &str) {
+        let rs_name = sanitize_ident(name, "T");
+        let ty = self.e.module.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Sequence(s) => {
+                let view_name = format!("{}View", rs_name);
+                self.e.wln(&format!(
+                    "pub fn write_{}View<W: Write>(w: &mut W, v: &{}<'_>) -> io::Result<()> {{",
+                    rs_name, view_name
+                ));
+                self.e.indent();
+                for (mname, mtid) in &s.members {
+                    let expr = format!("v.{}", sanitize_ident(mname, "T"));
+                    self.emit_write_member_view(*mtid, &expr);
+                }
+                self.e.wln("Ok(())");
+                self.e.dedent();
+                self.e.wln("}");
+            }
+            TypeKind::Variant(v) => {
+                let view_name = format!("{}View", rs_name);
+                let write_prim = self.rs_write_prim(&v.ty);
+                self.e.wln(&format!(
+                    "pub fn write_{}View<W: Write>(w: &mut W, v: &{}<'_>) -> io::Result<()> {{",
+                    rs_name, view_name
+                ));
+                self.e.indent();
+                self.e.wln("match v {");
+                self.e.indent();
+                for (idx, (val, vt)) in v.members.iter().enumerate() {
+                    self.e.wln(&format!("{}::Alt{}(__x) => {{", view_name, idx));
+                    self.e.indent();
+                    self.e.wln(&format!("{}(w, {})?;", write_prim, val));
+                    // payload
+                    self.emit_write_member_view(*vt, "__x");
+                    self.e.wln("Ok(())");
+                    self.e.dedent();
+                    self.e.wln("}");
+                }
+                if let Some((dfv, dt)) = &v.default {
+                    self.e.wln(&format!("{}::DefaultAlt(__x) => {{", view_name));
+                    self.e.indent();
+                    self.e.wln(&format!("{}(w, {})?;", write_prim, dfv));
+                    self.emit_write_member_view(*dt, "__x");
+                    self.e.wln("Ok(())");
+                    self.e.dedent();
+                    self.e.wln("}");
+                }
+                self.e.dedent();
+                self.e.wln("}");
+                self.e.dedent();
+                self.e.wln("}");
+            }
+            _ => {}
+        }
+    }
+
     fn rs_read_prim(&self, p: &Primitive) -> &'static str {
         match p {
             Primitive::U8 => "read_u8",
@@ -549,6 +650,61 @@ impl<'a> RustEmitter<'a> {
             Primitive::I64 => "write_i64",
             Primitive::F32 => "write_f32",
             Primitive::F64 => "write_f64",
+        }
+    }
+
+    fn rust_type_for_view_field(&self, tid: TypeID, lt: &str) -> String {
+        let ty = self.e.module.lookup(tid).expect("unknown type");
+        match &ty.kind {
+            TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Enum(_)
+            | TypeKind::Bitfld(_)
+            | TypeKind::Pack(_)
+            | TypeKind::Sequence(_)
+            | TypeKind::Variant(_) => {
+                if let Some(name) = self.e.name_of(tid) {
+                    format!("&{} {}", lt, sanitize_ident(name, "T"))
+                } else {
+                    format!("&{} i32", lt)
+                }
+            }
+            TypeKind::DynamicArray(ArrayKind::Dynamic { value_type, .. })
+            | TypeKind::FixedArray(ArrayKind::Dynamic { value_type, .. }) => {
+                let elem = self.rust_type_for_view_array_elem(*value_type);
+                format!("&{} [{}]", lt, elem)
+            }
+            TypeKind::FixedArray(ArrayKind::Fixed { value_type, .. })
+            | TypeKind::DynamicArray(ArrayKind::Fixed { value_type, .. }) => {
+                let elem = self.rust_type_for_view_array_elem(*value_type);
+                format!("&{} [{}]", lt, elem)
+            }
+            TypeKind::Alias(_inner) => {
+                // alias not supported
+                "i32".to_string()
+            }
+        }
+    }
+
+    fn rust_type_for_view_array_elem(&self, tid: TypeID) -> String {
+        let ty = self.e.module.lookup(tid).expect("unknown type");
+        match &ty.kind {
+            TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Enum(_)
+            | TypeKind::Bitfld(_)
+            | TypeKind::Pack(_)
+            | TypeKind::Sequence(_)
+            | TypeKind::Variant(_) => {
+                if let Some(name) = self.e.name_of(tid) {
+                    sanitize_ident(name, "T")
+                } else {
+                    "i32".to_string()
+                }
+            }
+            // Nested arrays represented the same as sequence fields (Vec<...>)
+            TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
+                self.rust_type_for_seq_field(tid)
+            }
+            TypeKind::Alias(_inner) => "i32".to_string(),
         }
     }
 
@@ -723,6 +879,119 @@ impl<'a> RustEmitter<'a> {
             TypeKind::Alias(_inner) => {
                 self.e.wln(
                     "return Err(io::Error::new(io::ErrorKind::Other, \"alias not supported\"));",
+                );
+            }
+        }
+    }
+
+    fn emit_write_member_view(&mut self, tid: TypeID, expr: &str) {
+        let ty = self.e.module.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Primitive(p) => {
+                let m = self.rs_write_prim(p);
+                self.e.wln(&format!("{}(w, {})?;", m, expr));
+            }
+            TypeKind::Enum(_) => {
+                if let Some(name) = self.e.name_of(tid) {
+                    let func = format!("write_{}", sanitize_ident(name, "T"));
+                    // enum view field is by value; pass reference
+                    self.e.wln(&format!("{}(w, &{})?;", func, expr));
+                } else {
+                    self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"anonymous enum in view\"));");
+                }
+            }
+            TypeKind::Bitfld(_)
+            | TypeKind::Pack(_)
+            | TypeKind::Sequence(_)
+            | TypeKind::Variant(_) => {
+                if let Some(name) = self.e.name_of(tid) {
+                    let func = format!("write_{}", sanitize_ident(name, "T"));
+                    // expr is a &T already in view types
+                    self.e.wln(&format!("{}(w, {})?;", func, expr));
+                } else {
+                    self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"anonymous composite in view\"));");
+                }
+            }
+            TypeKind::DynamicArray(ArrayKind::Dynamic {
+                size_type,
+                value_type,
+            })
+            | TypeKind::FixedArray(ArrayKind::Dynamic {
+                size_type,
+                value_type,
+            }) => {
+                let st = self.e.module.lookup(*size_type).unwrap();
+                let sp = match &st.kind {
+                    TypeKind::Primitive(p) => p,
+                    _ => panic!("size_type not primitive"),
+                };
+                let write_m = self.rs_write_prim(sp);
+                let vt = self.e.module.lookup(*value_type).unwrap();
+                let is_u8 = matches!(vt.kind, TypeKind::Primitive(Primitive::U8));
+                self.e.wln(&format!(
+                    "{}(w, {}.len() as {})?;",
+                    write_m,
+                    expr,
+                    self.rust_primitive(sp)
+                ));
+                if is_u8 {
+                    self.e.wln(&format!("w.write_all({})?;", expr));
+                } else {
+                    self.e.wln(&format!("for __v in {}.iter() {{", expr));
+                    self.e.indent();
+                    match &vt.kind {
+                        TypeKind::Primitive(p) => {
+                            let wm = self.rs_write_prim(p);
+                            self.e.wln(&format!("{}(w, *__v)?;", wm));
+                        }
+                        _ => {
+                            if let Some(nm) = self.e.name_of(*value_type) {
+                                let func = format!("write_{}", sanitize_ident(nm, "T"));
+                                self.e.wln(&format!("{}(w, __v)?;", func));
+                            } else {
+                                self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"anonymous type in array view\"));");
+                            }
+                        }
+                    }
+                    self.e.dedent();
+                    self.e.wln("}");
+                }
+            }
+            TypeKind::FixedArray(ArrayKind::Fixed { count, value_type })
+            | TypeKind::DynamicArray(ArrayKind::Fixed { count, value_type }) => {
+                // View uses slice; enforce expected length
+                self.e.wln(&format!(
+                    "if {}.len() != {} {{ return Err(io::Error::new(io::ErrorKind::InvalidData, \"fixed array length mismatch\")); }}",
+                    expr, count
+                ));
+                let vt = self.e.module.lookup(*value_type).unwrap();
+                let is_u8 = matches!(vt.kind, TypeKind::Primitive(Primitive::U8));
+                if is_u8 {
+                    self.e.wln(&format!("w.write_all({})?;", expr));
+                } else {
+                    self.e.wln(&format!("for __v in {}.iter() {{", expr));
+                    self.e.indent();
+                    match &vt.kind {
+                        TypeKind::Primitive(p) => {
+                            let wm = self.rs_write_prim(p);
+                            self.e.wln(&format!("{}(w, *__v)?;", wm));
+                        }
+                        _ => {
+                            if let Some(nm) = self.e.name_of(*value_type) {
+                                let func = format!("write_{}", sanitize_ident(nm, "T"));
+                                self.e.wln(&format!("{}(w, __v)?;", func));
+                            } else {
+                                self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"anonymous type in array view\"));");
+                            }
+                        }
+                    }
+                    self.e.dedent();
+                    self.e.wln("}");
+                }
+            }
+            TypeKind::Alias(_inner) => {
+                self.e.wln(
+                    "return Err(io::Error::new(io::ErrorKind::Other, \"alias not supported in view\"));",
                 );
             }
         }

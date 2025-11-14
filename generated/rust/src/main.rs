@@ -113,7 +113,9 @@ fn build_expected() -> Vec<Root> {
 fn encode_all(msgs: &[Root]) -> io::Result<Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
     for r in msgs {
-        write_Root(&mut out, r).inspect_err(|x| eprintln!("Unable to write root {x}"))?;
+        let view = RootView { name: &r.name, var: &r.var };
+        write_RootView(&mut out, &view)
+            .inspect_err(|x| eprintln!("Unable to write root view {x}"))?;
     }
     Ok(out)
 }
