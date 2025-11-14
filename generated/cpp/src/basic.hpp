@@ -87,18 +87,6 @@ namespace basic {
         return w.write_raw(in);
     }
     
-    struct MyOtherPOD {
-        MyPOD first;
-        std::array<uint8_t, 4> second;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
-        return r.read_raw(out);
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
-        return w.write_raw(in);
-    }
-    
     struct SmallSeq {
         std::vector<float> list;
     };
@@ -136,6 +124,18 @@ namespace basic {
             }
         }
         return true;
+    }
+    
+    struct MyOtherPOD {
+        MyPOD first;
+        std::array<uint8_t, 4> second;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
+        return r.read_raw(out);
+    }
+    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
+        return w.write_raw(in);
     }
     
     struct MyVariant { std::variant<MyPOD, MyOtherPOD, SmallSeq> value; };

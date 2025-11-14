@@ -7,11 +7,13 @@ use crate::module::Module;
 mod cpp;
 mod python;
 mod common;
+mod rust;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum KnownGenerators {
     CPP,
     PYTHON,
+    RUST,
 }
 
 #[derive(Debug, Error)]
@@ -28,5 +30,6 @@ pub fn emit_for(
     match ty {
         KnownGenerators::CPP => cpp::emit_cpp_header(module, file),
         KnownGenerators::PYTHON => python::emit_python(module, file),
+        KnownGenerators::RUST => rust::emit_rust(module, file),
     }
 }

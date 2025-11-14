@@ -4,16 +4,17 @@ A binary protocol code generator
 Overview
 - Parse a small DSL (`.jaw`) that describes binary message layouts
 - Validate and compile into an intermediate type graph
-- Generate reader/writer code for C++ or Python
+- Generate reader/writer code for C++, Python, or Rust
 
 Quickstart
 - Build: `cargo build` (Rust 2024 edition)
-- Run: `cargo run -- <INPUT.jaw> --kind <CPP|PYTHON> <OUTPUT>`
+- Run: `cargo run -- <INPUT.jaw> --kind <CPP|PYTHON|RUST> <OUTPUT>`
   - Example (Python): `cargo run -- assets/basic.jaw --kind PYTHON generated/python/basic.py`
   - Example (C++): `cargo run -- assets/basic.jaw --kind CPP generated/cpp/src/basic.hpp`
+  - Example (Rust): `cargo run -- assets/basic.jaw --kind RUST generated/rust/basic.rs`
 
 CLI
-- `--kind`: selects output generator. Supported: `CPP`, `PYTHON`.
+- `--kind`: selects output generator. Supported: `CPP`, `PYTHON`, `RUST`.
 - Exit codes: non-zero on parse/validation/generation errors. Errors display spans using ariadne with helpful labels.
 
 DSL Summary
@@ -45,6 +46,7 @@ Lexical Notes
 Generated Code
 - Python: little-endian reader/writer helpers and simple data structures. See `generated/python/` examples.
 - C++: header-only types and readers/writers. Endianness is determined by the provided Reader/Writer in C++.
+- Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write` in little-endian.
 
 Examples
 - See `assets/basic.jaw` and generated outputs under `generated/` for reference.

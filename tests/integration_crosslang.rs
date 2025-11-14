@@ -94,7 +94,11 @@ fn cmake_configure_build(build_dir: &Path) -> Result<PathBuf, Box<dyn std::error
     }
 
     // Locate binary (handle single- and multi-config generators)
-    let exe_name = if cfg!(target_os = "windows") { "jaw_cpp.exe" } else { "jaw_cpp" };
+    let exe_name = if cfg!(target_os = "windows") {
+        "jaw_cpp.exe"
+    } else {
+        "jaw_cpp"
+    };
     let candidates = [
         build_dir.join(exe_name),
         build_dir.join("Release").join(exe_name),
@@ -107,11 +111,38 @@ fn cmake_configure_build(build_dir: &Path) -> Result<PathBuf, Box<dyn std::error
     Ok(exe)
 }
 
-fn run_cpp_dump(exe: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new(exe)
-        .arg("--dump")
-        .arg(out_path)
+fn cargo_build_rust_driver() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = repo_root();
+    let rust_dir = root.join("generated/rust");
+
+    // Build debug driver
+    let status = Command::new("cargo")
+        .arg("build")
+        .current_dir(&rust_dir)
         .status()?;
+    if !status.success() {
+        return Err("cargo build failed".into());
+    }
+
+    // Locate binary
+    let exe_name = if cfg!(target_os = "windows") {
+        "jaw_rust.exe"
+    } else {
+        "jaw_rust"
+    };
+    let candidates = [
+        rust_dir.join("target").join("debug").join(exe_name),
+        rust_dir.join("target").join("release").join(exe_name),
+    ];
+    let exe = candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| "built rust driver not found".to_string())?;
+    Ok(exe)
+}
+
+fn run_cpp_dump(exe: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(exe).arg("--dump").arg(out_path).status()?;
     if !status.success() {
         return Err("C++ driver --dump failed".into());
     }
@@ -119,10 +150,7 @@ fn run_cpp_dump(exe: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::E
 }
 
 fn run_cpp_read(exe: &Path, in_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new(exe)
-        .arg("--read")
-        .arg(in_path)
-        .status()?;
+    let status = Command::new(exe).arg("--read").arg(in_path).status()?;
     if !status.success() {
         return Err("C++ driver --read failed".into());
     }
@@ -157,6 +185,22 @@ fn run_python_read(py: &str, in_path: &Path) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+fn run_rust_dump(exe: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(exe).arg("--dump").arg(out_path).status()?;
+    if !status.success() {
+        return Err("Rust driver --dump failed".into());
+    }
+    Ok(())
+}
+
+fn run_rust_read(exe: &Path, in_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(exe).arg("--read").arg(in_path).status()?;
+    if !status.success() {
+        return Err("Rust driver --read failed".into());
+    }
+    Ok(())
+}
+
 #[test]
 fn cross_language_roundtrip_and_compatibility() -> Result<(), Box<dyn std::error::Error>> {
     // Pre-flight checks
@@ -186,25 +230,32 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), Box<dyn std::error
     let build_dir = target_dir.join(unique);
     let cpp_exe = cmake_configure_build(&build_dir)?;
 
+    // 2b) Build Rust driver (debug)
+    let rust_exe = cargo_build_rust_driver()?;
+
     // 3) Create temp dir for dumps
     let dumps_dir = build_dir.join("dumps");
     fs::create_dir_all(&dumps_dir)?;
     let cpp_dump = dumps_dir.join("from_cpp.bin");
     let py_dump = dumps_dir.join("from_py.bin");
+    let rs_dump = dumps_dir.join("from_rs.bin");
 
-    // 4) Generate dump via C++ and verify via Python
+    // 4) Generate dump via C++ and verify via Python + Rust
     run_cpp_dump(&cpp_exe, &cpp_dump)?;
     run_python_read(py, &cpp_dump)?;
+    run_rust_read(&rust_exe, &cpp_dump)?;
 
-    // 5) Generate dump via Python and verify via C++
+    // 5) Generate dump via Python and verify via C++ + Rust
     run_python_dump(py, &py_dump)?;
     run_cpp_read(&cpp_exe, &py_dump)?;
+    run_rust_read(&rust_exe, &py_dump)?;
 
-    // 6) Optionally, assert dumps are byte-for-byte identical
-    let a = fs::read(&cpp_dump)?;
-    let b = fs::read(&py_dump)?;
-    assert_eq!(a, b, "cross-language dumps differ");
+    // 6) Generate dump via Rust and verify via Python + C++
+    run_rust_dump(&rust_exe, &rs_dump)?;
+    run_python_read(py, &rs_dump)?;
+    run_cpp_read(&cpp_exe, &rs_dump)?;
+
+    // Do not assert dumps are byte-for-byte identical: padding bytes will be garbage
 
     Ok(())
 }
-

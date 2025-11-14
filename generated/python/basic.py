@@ -83,6 +83,16 @@ class Writer:
     def write_raw(self, obj):
         self._out.extend(ctypes.string_at(ctypes.addressof(obj), ctypes.sizeof(obj)))
 
+class PlainEnum:
+    F1 = 0
+    F2 = 1
+
+def read_PlainEnum(r):
+    tmp = r.read_u8()
+    return tmp
+def write_PlainEnum(w, obj):
+    w.write_u8(int(obj))
+
 class BetterEnum:
     A = 0
     B = 1
@@ -95,15 +105,18 @@ def read_BetterEnum(r):
 def write_BetterEnum(w, obj):
     w.write_u8(int(obj))
 
-class PlainEnum:
-    F1 = 0
-    F2 = 1
+class MyPOD(ctypes.Structure):
+    _fields_ = [
+        ('a_thing', ctypes.c_uint8),
+        ('b_thing', ctypes.c_uint64),
+    ]
 
-def read_PlainEnum(r):
-    tmp = r.read_u8()
-    return tmp
-def write_PlainEnum(w, obj):
-    w.write_u8(int(obj))
+def read_MyPOD(r):
+    size = ctypes.sizeof(MyPOD)
+    data = r.read_bytes(size)
+    return MyPOD.from_buffer_copy(data)
+def write_MyPOD(w, obj):
+    w.write_raw(obj)
 
 class MyFlags(ctypes.Structure):
     _fields_ = [
@@ -130,17 +143,17 @@ def read_MyFlags(r):
 def write_MyFlags(w, obj):
     w.write_u8(int(obj.value))
 
-class MyPOD(ctypes.Structure):
+class MyOtherPOD(ctypes.Structure):
     _fields_ = [
-        ('a_thing', ctypes.c_uint8),
-        ('b_thing', ctypes.c_uint64),
+        ('first', MyPOD),
+        ('second', (ctypes.c_uint8 * 4)),
     ]
 
-def read_MyPOD(r):
-    size = ctypes.sizeof(MyPOD)
+def read_MyOtherPOD(r):
+    size = ctypes.sizeof(MyOtherPOD)
     data = r.read_bytes(size)
-    return MyPOD.from_buffer_copy(data)
-def write_MyPOD(w, obj):
+    return MyOtherPOD.from_buffer_copy(data)
+def write_MyOtherPOD(w, obj):
     w.write_raw(obj)
 
 class SmallSeq:
@@ -158,19 +171,6 @@ def write_SmallSeq(w, obj):
     w.write_u8(len(obj.list))
     for __v in obj.list:
         w.write_f32(__v)
-
-class MyOtherPOD(ctypes.Structure):
-    _fields_ = [
-        ('first', MyPOD),
-        ('second', (ctypes.c_uint8 * 4)),
-    ]
-
-def read_MyOtherPOD(r):
-    size = ctypes.sizeof(MyOtherPOD)
-    data = r.read_bytes(size)
-    return MyOtherPOD.from_buffer_copy(data)
-def write_MyOtherPOD(w, obj):
-    w.write_raw(obj)
 
 class MyVariant:
     def __init__(self, tag=0, value=None):

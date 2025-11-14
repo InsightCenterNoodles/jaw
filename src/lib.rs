@@ -4,7 +4,7 @@
 //! - `tokens`: the tokenizer (lexer) that turns source text into tokens with spans
 //! - `tokenreader`: thin helper for consuming tokens ergonomically in the parser
 //! - `module`: parser + validation that builds a typed intermediate representation
-//! - `codegen`: backends for C++ and Python
+//! - `codegen`: backends for C++, Python, and Rust
 //!
 //! Most consumers interact with the CLI binary, but the `prelude` below exposes
 //! common types for embedding.
