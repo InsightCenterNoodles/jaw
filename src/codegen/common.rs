@@ -1,6 +1,10 @@
 use crate::module::{Module, TypeID};
 
-/// Minimal text emitter with indentation and name lookup helpers
+/// Minimal text emitter with indentation and name lookup helpers.
+///
+/// Backends push lines into a `String` while tracking indentation level.
+/// `TextEmitter` also exposes a `name_of(TypeID)` helper wired to the module
+/// so emitters can map type ids to their declared names.
 pub struct TextEmitter<'a> {
     pub module: &'a Module,
     pub out: String,
@@ -20,6 +24,7 @@ impl<'a> TextEmitter<'a> {
         self.out
     }
 
+    /// Write a line with current indentation.
     pub fn wln(&mut self, s: &str) {
         for _ in 0..self.indent {
             self.out.push_str("    ");
@@ -28,15 +33,18 @@ impl<'a> TextEmitter<'a> {
         self.out.push('\n');
     }
 
+    /// Increase indentation level by one.
     pub fn indent(&mut self) {
         self.indent += 1;
     }
 
+    /// Decrease indentation level by one.
     pub fn dedent(&mut self) {
         assert!(self.indent > 0);
         self.indent -= 1;
     }
 
+    /// Retrieve the declared name for a `TypeID`, if any.
     pub fn name_of(&self, tid: TypeID) -> Option<&str> {
         self.module.inv_type_map.get(&tid).map(|s| s.as_str())
     }
@@ -64,4 +72,3 @@ pub fn sanitize_ident(raw: &str, default: &str) -> String {
     }
     s
 }
-

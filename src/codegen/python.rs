@@ -1,6 +1,12 @@
+//! Python backend: emits a single module using `ctypes` for POD structs
+//! and ad-hoc Reader/Writer classes for I/O.
+//!
+//! The generated code mirrors the layout and read/write semantics of the
+//! other backends to support the cross-language roundtrip tests.
 use crate::{module::*, tokens::Span};
 use crate::codegen::common::{TextEmitter, sanitize_ident};
 
+/// Emit a Python module as a single string into the given writer.
 pub fn emit_python(
     module: Module,
     mut file: impl std::io::Write,
@@ -15,6 +21,7 @@ pub fn emit_python(
     Ok(())
 }
 
+/// Implementation of the Python emitter backed by a `TextEmitter`.
 struct PyEmitter<'a> { e: TextEmitter<'a> }
 
 impl<'a> PyEmitter<'a> {

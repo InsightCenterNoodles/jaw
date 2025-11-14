@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, Cursor};
 use std::path::PathBuf;
 
 // Include generated Rust module for assets/basic.jaw
@@ -113,7 +113,10 @@ fn build_expected() -> Vec<Root> {
 fn encode_all(msgs: &[Root]) -> io::Result<Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
     for r in msgs {
-        let view = RootView { name: &r.name, var: &r.var };
+        let view = RootView {
+            name: &r.name,
+            var: &r.var,
+        };
         write_RootView(&mut out, &view)
             .inspect_err(|x| eprintln!("Unable to write root view {x}"))?;
     }
@@ -183,7 +186,7 @@ fn main() -> io::Result<()> {
     let mut dump_path: Option<PathBuf> = None;
     let mut read_path: Option<PathBuf> = None;
 
-    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {

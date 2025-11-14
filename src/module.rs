@@ -1,3 +1,12 @@
+//! Parser and typed intermediate representation (IR) for the `.jaw` DSL.
+//!
+//! Responsibilities
+//! - Parse source into a `PartialModule` using the token reader.
+//! - Validate invariants (e.g., integer enum bases, POD constraints, array rules).
+//! - Produce a compiled `Module` with dependency-ordered types for codegen.
+//!
+//! The IR is intentionally small and language-agnostic to keep codegen backends
+//! straightforward.
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::RangeInclusive,
@@ -6,6 +15,7 @@ use std::{
 use crate::tokenreader::TokenReader;
 use crate::tokens::{self, Keyword, Span, Symbol, Token};
 
+/// Opaque identifier used to reference a type inside the module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeID(u32);
 
@@ -15,6 +25,7 @@ impl std::fmt::Display for TypeID {
     }
 }
 
+/// Primitive scalar types supported by the language.
 #[derive(Debug, Clone, Copy)]
 pub enum Primitive {
     I8,
@@ -32,10 +43,12 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    /// Whether the primitive is an integer type.
     fn is_integer(&self) -> bool {
         !matches!(self, Primitive::F32 | Primitive::F64)
     }
 
+    /// Bit width of integer primitives, or `None` for floats.
     fn bit_width(&self) -> Option<u32> {
         match self {
             Primitive::I8 | Primitive::U8 => Some(8),
@@ -46,6 +59,7 @@ impl Primitive {
         }
     }
 
+    /// Inclusive min/max bounds for integer primitives.
     fn int_bounds(&self) -> Option<(i128, i128)> {
         match self {
             Primitive::U8 => Some((u8::MIN as i128, u8::MAX as i128)),
@@ -82,11 +96,13 @@ impl std::fmt::Display for Primitive {
     }
 }
 
+/// Plain-old-data aggregate with C-like layout.
 #[derive(Debug)]
 pub struct Pack {
     pub members: Vec<(String, TypeID)>,
 }
 
+/// Enum with an explicit primitive underlying type.
 #[derive(Debug)]
 pub struct Enum {
     pub ty: Primitive,
@@ -94,12 +110,14 @@ pub struct Enum {
     pub default: Option<(String, i64)>,
 }
 
+/// Bitfield backed by an integer/enum type with named bit ranges.
 #[derive(Debug)]
 pub struct Bitfld {
     pub ty: TypeID,
     pub members: Vec<(String, TypeID, RangeInclusive<u32>)>,
 }
 
+/// Tagged union where the discriminant has a primitive integer type.
 #[derive(Debug)]
 pub struct Variant {
     pub ty: Primitive,
@@ -107,11 +125,13 @@ pub struct Variant {
     pub default: Option<(u64, TypeID)>,
 }
 
+/// Sequence of named fields (a typical record/struct).
 #[derive(Debug)]
 pub struct Sequence {
     pub members: Vec<(String, TypeID)>,
 }
 
+/// Array kinds used in inline type contexts.
 #[derive(Debug)]
 pub enum ArrayKind {
     Dynamic {
@@ -124,6 +144,7 @@ pub enum ArrayKind {
     },
 }
 
+/// All possible type forms in the IR.
 #[derive(Debug)]
 pub enum TypeKind {
     Primitive(Primitive),
@@ -137,6 +158,7 @@ pub enum TypeKind {
     FixedArray(ArrayKind),
 }
 
+/// A defined (or placeholder) type with a name and source location.
 #[derive(Debug)]
 pub struct Type {
     pub defined_at: Span,
@@ -251,6 +273,7 @@ type Result<T> = std::result::Result<T, ModuleBuildError>;
 
 // MARK: Module
 
+/// A fully compiled module with resolved types and an emission order.
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
@@ -261,11 +284,13 @@ pub struct Module {
 }
 
 impl Module {
+    /// Lookup a type by id. Returns `None` if the id is unknown.
     pub fn lookup(&self, t: TypeID) -> Option<&Type> {
         self.types.get(&t)
     }
 }
 
+/// Builder used during parsing prior to validation and topological sort.
 #[derive(Debug)]
 pub struct PartialModule {
     pub name: String,
@@ -275,6 +300,7 @@ pub struct PartialModule {
 }
 
 impl PartialModule {
+    /// Parse a source string into a `PartialModule` with unresolved references.
     pub fn from_string(module_name: &str, source: &str) -> Result<Self> {
         let mut module = PartialModule {
             name: module_name.into(),
@@ -307,6 +333,9 @@ impl PartialModule {
         Ok(module)
     }
 
+    /// Finalize the module:
+    /// - Resolve dependency graph and compute a topological order of named types.
+    /// - Validate semantic constraints and report descriptive errors.
     pub fn compile(self) -> Module {
         // Build dependency graph: dep -> dependents, and in-degree counts for Kahn's algorithm
         let types = self.all_types();

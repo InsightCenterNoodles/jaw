@@ -1,8 +1,15 @@
+//! C++ backend: emits a single header containing types and helpers.
+//!
+//! Highlights
+//! - `read`/`write` free functions parameterized by a `Reader`/`Writer` concept
+//!   (provides `read_raw`/`write_raw`).
+//! - For sequences and variants, also emits `<Name>View` types so callers can
+//!   write directly from pointers/spans without constructing full values.
 use crate::{module::*, tokens::Span};
 use crate::codegen::common::{TextEmitter, sanitize_ident};
 use std::fmt::Write;
 
-// Public entry: emit a single header string with all types and read/write helpers
+/// Public entry: emit a single header string with all types and read/write helpers.
 pub fn emit_cpp_header(
     module: Module,
     mut file: impl std::io::Write,
