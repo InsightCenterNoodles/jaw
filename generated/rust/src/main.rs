@@ -54,7 +54,21 @@ fn build_expected() -> Vec<Root> {
         expected.push(r);
     }
 
-    // 3) Variant = SmallSeq with floats
+    // 3) Variant = void
+    {
+        let mut r = Root {
+            name: Vec::new(),
+            var: MyVariant::Alt0(MyPOD {
+                a_thing: 0,
+                b_thing: 0,
+            }),
+        };
+        r.name = b"void".to_vec();
+        r.var = MyVariant::Alt2(());
+        expected.push(r);
+    }
+
+    // 4) Variant = SmallSeq with floats
     {
         let mut r = Root {
             name: Vec::new(),
@@ -67,11 +81,11 @@ fn build_expected() -> Vec<Root> {
         let seq = SmallSeq {
             list: vec![1.0, 2.5, -3.25, 0.0],
         };
-        r.var = MyVariant::DefaultAlt(seq); // default alt is tag=2
+        r.var = MyVariant::DefaultAlt(seq); // default alt is tag=3 now
         expected.push(r);
     }
 
-    // 4) Another MyPOD with larger values
+    // 5) Another MyPOD with larger values
     {
         let mut r = Root {
             name: Vec::new(),
@@ -89,7 +103,7 @@ fn build_expected() -> Vec<Root> {
         expected.push(r);
     }
 
-    // 5) Another SmallSeq, longer
+    // 6) Another SmallSeq, longer
     {
         let mut r = Root {
             name: Vec::new(),
@@ -162,6 +176,9 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
                         &format!("MyOtherPOD.second[{}] at {}", j, i),
                     );
                 }
+            }
+            (MyVariant::Alt2(_), MyVariant::Alt2(_)) => {
+                // void payload, nothing to compare
             }
             (MyVariant::DefaultAlt(es), MyVariant::DefaultAlt(as_)) => {
                 demand(

@@ -18,22 +18,6 @@ namespace basic {
         template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }
     } // namespace detail
     
-    enum class PlainEnum : uint8_t {
-        F1 = 0,
-        F2 = 1,
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
-        uint8_t tmp{};
-        if (!detail::read_raw(r, tmp)) return false;
-        out = static_cast<PlainEnum>(tmp);
-        return true;
-    }
-    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
-        uint8_t tmp = static_cast<uint8_t>(in);
-        return detail::write_raw(w, tmp);
-    }
-    
     enum class BetterEnum : uint8_t {
         A = 0,
         B = 1,
@@ -51,6 +35,22 @@ namespace basic {
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const BetterEnum& in) {
+        uint8_t tmp = static_cast<uint8_t>(in);
+        return detail::write_raw(w, tmp);
+    }
+    
+    enum class PlainEnum : uint8_t {
+        F1 = 0,
+        F2 = 1,
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
+        uint8_t tmp{};
+        if (!detail::read_raw(r, tmp)) return false;
+        out = static_cast<PlainEnum>(tmp);
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
         uint8_t tmp = static_cast<uint8_t>(in);
         return detail::write_raw(w, tmp);
     }
@@ -138,8 +138,8 @@ namespace basic {
         return w.write_raw(in);
     }
     
-    struct MyVariant { std::variant<MyPOD, MyOtherPOD, SmallSeq> value; };
-    struct MyVariantView { std::variant<MyPOD const* , MyOtherPOD const* , SmallSeq const* > value; };
+    struct MyVariant { std::variant<MyPOD, MyOtherPOD, std::monostate, SmallSeq> value; };
+    struct MyVariantView { std::variant<MyPOD const* , MyOtherPOD const* , std::monostate, SmallSeq const* > value; };
     
     template <typename Reader> inline bool read(Reader& r, MyVariant& out) {
         uint8_t tag{};
@@ -155,8 +155,12 @@ namespace basic {
                 if (!read(r, tmp)) return false;
                 return true;
             }
+            case 2: {
+                (void)out.value.emplace<2>();
+                return true;
+            }
             default: {
-                SmallSeq& tmp = out.value.emplace<2>();
+                SmallSeq& tmp = out.value.emplace<3>();
                 if (!read(r, tmp)) return false;
                 return true;
             }
@@ -170,6 +174,7 @@ namespace basic {
             case 0: tag = static_cast<uint8_t>(0); break;
             case 1: tag = static_cast<uint8_t>(1); break;
             case 2: tag = static_cast<uint8_t>(2); break;
+            case 3: tag = static_cast<uint8_t>(3); break;
             default: return false;
         }
         if (!detail::write_raw(w, tag)) return false;
@@ -185,7 +190,10 @@ namespace basic {
                 return true;
             }
             case 2: {
-                const auto& ptr = std::get<2>(in.value);
+                return true;
+            }
+            case 3: {
+                const auto& ptr = std::get<3>(in.value);
                 if (!write(w, ptr)) return false;
                 return true;
             }
@@ -200,6 +208,7 @@ namespace basic {
             case 0: tag = static_cast<uint8_t>(0); break;
             case 1: tag = static_cast<uint8_t>(1); break;
             case 2: tag = static_cast<uint8_t>(2); break;
+            case 3: tag = static_cast<uint8_t>(3); break;
             default: return false;
         }
         if (!detail::write_raw(w, tag)) return false;
@@ -215,7 +224,10 @@ namespace basic {
                 return true;
             }
             case 2: {
-                auto ptr = std::get<2>(in.value);
+                return true;
+            }
+            case 3: {
+                auto ptr = std::get<3>(in.value);
                 if (!write(w, *ptr)) return false;
                 return true;
             }

@@ -149,7 +149,7 @@ impl<'a> RustEmitter<'a> {
                     self.emit_variant_view(&name, v);
                 }
                 TypeKind::Alias(_) => {}
-                TypeKind::Primitive(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {}
+                TypeKind::Primitive(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) | TypeKind::Void => {}
             }
             self.e.wln("");
             self.emit_read_fn(tid, &name);
@@ -187,6 +187,7 @@ impl<'a> RustEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Void => "()".to_string(),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -223,6 +224,7 @@ impl<'a> RustEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Void => "()".to_string(),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -683,6 +685,7 @@ impl<'a> RustEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Void => format!("&{} ()", lt),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -715,6 +718,7 @@ impl<'a> RustEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.rust_primitive(p).to_string(),
+            TypeKind::Void => "()".to_string(),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -740,6 +744,9 @@ impl<'a> RustEmitter<'a> {
             TypeKind::Primitive(p) => {
                 let m = self.rs_read_prim(p);
                 self.e.wln(&format!("let {} = {}(r)?;", lhs_ident, m));
+            }
+            TypeKind::Void => {
+                self.e.wln(&format!("let {} = ();", lhs_ident));
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -830,6 +837,9 @@ impl<'a> RustEmitter<'a> {
                 let m = self.rs_read_prim(p);
                 self.e.wln(&format!("let {} = {}(r)?;", lhs_ident, m));
             }
+            TypeKind::Void => {
+                self.e.wln(&format!("let {} = ();", lhs_ident));
+            }
             _ => {
                 if let Some(name) = self.e.name_of(tid) {
                     let func = format!("read_{}", sanitize_ident(name, "T"));
@@ -847,6 +857,9 @@ impl<'a> RustEmitter<'a> {
             TypeKind::Primitive(p) => {
                 let m = self.rs_write_prim(p);
                 self.e.wln(&format!("{}(w, {})?;", m, expr));
+            }
+            TypeKind::Void => {
+                self.e.wln("/* void: no payload */");
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -916,6 +929,9 @@ impl<'a> RustEmitter<'a> {
             TypeKind::Primitive(p) => {
                 let m = self.rs_write_prim(p);
                 self.e.wln(&format!("{}(w, {})?;", m, expr));
+            }
+            TypeKind::Void => {
+                self.e.wln("/* void: no payload */");
             }
             TypeKind::Enum(_) => {
                 if let Some(name) = self.e.name_of(tid) {

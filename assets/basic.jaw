@@ -26,7 +26,8 @@ seq SmallSeq
 variant MyVariant : u8
 - 0 => MyPOD
 - 1 => MyOtherPOD
-= 2 => SmallSeq
+- 2 => void
+= 3 => SmallSeq
 
 seq Root
 - name : {u8 * u8}

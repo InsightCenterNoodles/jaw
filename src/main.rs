@@ -337,6 +337,18 @@ fn show_error(name: &str, source: &str, error: ModuleBuildError) {
         ModuleBuildError::Internal(_) => {
             eprintln!("{}", error_string);
         }
+        ModuleBuildError::VoidOnlyInVariant(span) => {
+            Report::build(ReportKind::Error, make_report_span(span))
+                .with_message(error_string)
+                .with_label(
+                    Label::new(make_report_span(span))
+                        .with_message("void allowed only in variant alternatives")
+                        .with_color(a),
+                )
+                .finish()
+                .eprint((name.to_owned(), Source::from(source)))
+                .unwrap();
+        }
     }
 }
 

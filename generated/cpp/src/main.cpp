@@ -81,7 +81,15 @@ int main(int argc, char** argv) {
         expected.push_back(r);
     }
 
-    // 3) Variant = SmallSeq with floats
+    // 3) Variant = void
+    {
+        Root r{};
+        r.name = to_bytes("void");
+        r.var.value = std::monostate{};
+        expected.push_back(r);
+    }
+
+    // 4) Variant = SmallSeq with floats
     {
         Root r{};
         r.name = to_bytes("floats");
@@ -91,7 +99,7 @@ int main(int argc, char** argv) {
         expected.push_back(r);
     }
 
-    // 4) Another MyPOD with larger values
+    // 5) Another MyPOD with larger values
     {
         Root r{};
         r.name = to_bytes("pod-two");
@@ -99,7 +107,7 @@ int main(int argc, char** argv) {
         expected.push_back(r);
     }
 
-    // 5) Another SmallSeq, longer
+    // 6) Another SmallSeq, longer
     {
         Root r{};
         r.name = to_bytes("seq-long");
@@ -146,15 +154,20 @@ int main(int argc, char** argv) {
                     }
                     break;
                 }
-                default: {
-                    const auto& es = std::get<2>(e.var.value);
-                    const auto& as = std::get<2>(a.var.value);
+                case 2: {
+                    // void: no payload to compare
+                    break;
+                }
+                case 3: {
+                    const auto& es = std::get<3>(e.var.value);
+                    const auto& as = std::get<3>(a.var.value);
                     demand(as.list.size() == es.list.size(), "SmallSeq.size");
                     for (size_t j = 0; j < es.list.size(); ++j) {
                         demand(as.list[j] == es.list[j], "SmallSeq.value[j]");
                     }
                     break;
                 }
+                default: demand(false, "unexpected variant index"); break;
             }
         }
         std::printf("Verified dump ok (%zu messages)\n", expected.size());
@@ -210,15 +223,20 @@ int main(int argc, char** argv) {
                     }
                     break;
                 }
-                default: {
-                    const auto& es = std::get<2>(e.var.value);
-                    const auto& as = std::get<2>(a.var.value);
+                case 2: {
+                    // void: no payload to compare
+                    break;
+                }
+                case 3: {
+                    const auto& es = std::get<3>(e.var.value);
+                    const auto& as = std::get<3>(a.var.value);
                     demand(as.list.size() == es.list.size(), "SmallSeq.size");
                     for (size_t j = 0; j < es.list.size(); ++j) {
                         demand(as.list[j] == es.list[j], "SmallSeq.value[j]");
                     }
                     break;
                 }
+                default: demand(false, "unexpected variant index"); break;
             }
         }
         std::printf("All checks passed (%zu messages)\n", expected.size());

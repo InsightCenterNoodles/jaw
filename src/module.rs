@@ -156,6 +156,8 @@ pub enum TypeKind {
     Sequence(Sequence),
     DynamicArray(ArrayKind),
     FixedArray(ArrayKind),
+    /// Special zero-sized type allowed only as a Variant alternative payload.
+    Void,
 }
 
 /// A defined (or placeholder) type with a name and source location.
@@ -267,6 +269,9 @@ pub enum ModuleBuildError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("void may be used only as a variant alternative at {0}")]
+    VoidOnlyInVariant(Span),
 }
 
 type Result<T> = std::result::Result<T, ModuleBuildError>;
@@ -353,6 +358,7 @@ impl PartialModule {
             let mut deps: Vec<TypeID> = Vec::new();
             match &ty.kind {
                 TypeKind::Primitive(_) => {}
+                TypeKind::Void => {}
                 TypeKind::Alias(inner) => {
                     // Recurse into the aliased type definition
                     collect_deps_into(inner, &mut deps);
@@ -409,6 +415,7 @@ impl PartialModule {
         fn collect_deps_into(ty: &Type, out: &mut Vec<TypeID>) {
             match &ty.kind {
                 TypeKind::Primitive(_) => {}
+                TypeKind::Void => {}
                 TypeKind::Alias(inner) => collect_deps_into(inner, out),
                 TypeKind::Pack(Pack { members }) => {
                     for (_, tid) in members {
@@ -536,6 +543,7 @@ impl PartialModule {
                 TypeKind::Primitive(_) => true,
                 TypeKind::Enum(_) => true,
                 TypeKind::Bitfld(_) => true,
+                TypeKind::Void => true,
                 TypeKind::FixedArray(ArrayKind::Dynamic {
                     size_type: _,
                     value_type: _,
@@ -565,6 +573,7 @@ impl PartialModule {
                         TypeKind::DynamicArray(_)
                         | TypeKind::Sequence(_)
                         | TypeKind::Variant(_) => false,
+                        TypeKind::Void => true,
                         TypeKind::Alias(_) => false,
                     }
                 }
@@ -579,6 +588,11 @@ impl PartialModule {
                 TypeKind::Pack(Pack { members }) => {
                     for (name, mtid) in members {
                         let mut seen = HashSet::new();
+                        // void not allowed as pack member type
+                        if matches!(self.lookup(*mtid, validating_type.defined_at)?.kind, TypeKind::Void) {
+                            let at = validating_type.defined_at;
+                            return Err(ModuleBuildError::VoidOnlyInVariant(at));
+                        }
                         if !is_pod(self, *mtid, validating_type.defined_at, &mut seen)? {
                             let at = validating_type.defined_at;
 
@@ -710,7 +724,21 @@ impl PartialModule {
                         }
                     }
                 }
+                TypeKind::Sequence(Sequence { members }) => {
+                    // void not allowed as sequence field type
+                    for (_name, mtid) in members {
+                        if matches!(self.lookup(*mtid, validating_type.defined_at)?.kind, TypeKind::Void) {
+                            let at = validating_type.defined_at;
+                            return Err(ModuleBuildError::VoidOnlyInVariant(at));
+                        }
+                    }
+                }
                 TypeKind::FixedArray(ArrayKind::Fixed { value_type, .. }) => {
+                    // void not allowed as array element type
+                    if matches!(self.lookup(*value_type, validating_type.defined_at)?.kind, TypeKind::Void) {
+                        let at = validating_type.defined_at;
+                        return Err(ModuleBuildError::VoidOnlyInVariant(at));
+                    }
                     let mut seen = HashSet::new();
                     if !is_pod(self, *value_type, validating_type.defined_at, &mut seen)? {
                         let at = validating_type.defined_at;
@@ -736,6 +764,11 @@ impl PartialModule {
                             n_m: "{N * M}",
                             at,
                         });
+                    }
+                    // void not allowed as array element type
+                    if matches!(self.lookup(*value_type, validating_type.defined_at)?.kind, TypeKind::Void) {
+                        let at = validating_type.defined_at;
+                        return Err(ModuleBuildError::VoidOnlyInVariant(at));
                     }
                     // value_type can be anything (dynamic or POD), no constraint here
                     let _ = value_type; // silence pattern warning if any
@@ -872,6 +905,17 @@ impl PartialModule {
 
         add_prim("f32", Primitive::F32);
         add_prim("f64", Primitive::F64);
+
+        // Special built-in 'void' type allowed only as variant payloads.
+        self.install_builtin_type(
+            "void",
+            Type {
+                defined_at: Span::Builtin,
+                name: "void".to_string(),
+                kind: TypeKind::Void,
+            },
+        )
+        .unwrap();
     }
 }
 
@@ -1561,5 +1605,36 @@ seq S
             }
             _ => panic!("expected fixed array"),
         }
+    }
+
+    #[test]
+    fn variant_allows_void_payloads() {
+        let src = r#"
+variant V : u8
+- 0 => void
+- 1 => u8
+"#;
+        let pm = parse_ok(src);
+        let m = pm.compile();
+        let vid = m.type_map.get("V").unwrap().0;
+        let vty = m.lookup(vid).unwrap();
+        match &vty.kind {
+            TypeKind::Variant(Variant { ty, members, default }) => {
+                assert!(matches!(ty, Primitive::U8));
+                assert_eq!(members.len(), 2);
+                assert!(default.is_none());
+            }
+            _ => panic!("expected variant"),
+        }
+    }
+
+    #[test]
+    fn void_not_allowed_in_pack() {
+        let src = r#"
+pack P
+- a : void
+"#;
+        let err = PartialModule::from_string("test", src).unwrap_err();
+        assert!(matches!(err, ModuleBuildError::VoidOnlyInVariant(_)));
     }
 }

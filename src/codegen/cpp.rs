@@ -90,7 +90,7 @@ impl<'a> CppEmitter<'a> {
                 }
                 TypeKind::Variant(v) => self.emit_variant(&name_owned, v),
                 TypeKind::Alias(inner) => self.emit_alias(&name_owned, inner),
-                TypeKind::Primitive(_) => { /* already skipped by defined_at */ }
+                TypeKind::Primitive(_) | TypeKind::Void => { /* already skipped by defined_at or no-op */ }
                 TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
                     // Do not emit top-level for anonymous arrays; arrays should not be named top-level here.
                 }
@@ -209,16 +209,34 @@ impl<'a> CppEmitter<'a> {
         let mut alt_types: Vec<String> = Vec::new();
         let mut alt_ref_types: Vec<String> = Vec::new();
         for (_, tid) in &v.members {
-            let mut r = self.cpp_type_owned(*tid);
-            alt_types.push(r.clone());
-            r.push_str(" const* ");
-            alt_ref_types.push(r);
+            let t = self.e.module.lookup(*tid).expect("unknown type");
+            match &t.kind {
+                TypeKind::Primitive(_) | TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Sequence(_) | TypeKind::Variant(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) | TypeKind::Alias(_) => {
+                    let mut r = self.cpp_type_owned(*tid);
+                    alt_types.push(r.clone());
+                    r.push_str(" const* ");
+                    alt_ref_types.push(r);
+                }
+                TypeKind::Void => {
+                    alt_types.push("std::monostate".to_string());
+                    alt_ref_types.push("std::monostate".to_string());
+                }
+            }
         }
         if let Some((_, dftid)) = &v.default {
-            let mut r = self.cpp_type_owned(*dftid);
-            alt_types.push(r.clone());
-            r.push_str(" const* ");
-            alt_ref_types.push(r);
+            let t = self.e.module.lookup(*dftid).expect("unknown type");
+            match &t.kind {
+                TypeKind::Void => {
+                    alt_types.push("std::monostate".to_string());
+                    alt_ref_types.push("std::monostate".to_string());
+                }
+                _ => {
+                    let mut r = self.cpp_type_owned(*dftid);
+                    alt_types.push(r.clone());
+                    r.push_str(" const* ");
+                    alt_ref_types.push(r);
+                }
+            }
         }
         let alts = if alt_types.is_empty() {
             String::from("std::monostate")
@@ -307,10 +325,19 @@ impl<'a> CppEmitter<'a> {
                 for (idx, (val, vt)) in v.members.iter().enumerate() {
                     self.e.wln(&format!("case {}: {{", val));
                     self.e.indent();
-                    let val_cpp = self.cpp_type_owned(*vt);
-                    self.e.wln(&format!("{}& tmp = out.value.emplace<{}>();", val_cpp, idx));
-                    self.emit_read_member(*vt, "tmp");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*vt).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln(&format!("(void)out.value.emplace<{}>();", idx));
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            let val_cpp = self.cpp_type_owned(*vt);
+                            self.e.wln(&format!("{}& tmp = out.value.emplace<{}>();", val_cpp, idx));
+                            self.emit_read_member(*vt, "tmp");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 }
@@ -318,13 +345,22 @@ impl<'a> CppEmitter<'a> {
                     let default_index = v.members.len();
                     self.e.wln("default: {");
                     self.e.indent();
-                    let val_cpp = self.cpp_type_owned(*dftid);
-                    self.e.wln(&format!(
-                        "{}& tmp = out.value.emplace<{}>();",
-                        val_cpp, default_index
-                    ));
-                    self.emit_read_member(*dftid, "tmp");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*dftid).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln(&format!("(void)out.value.emplace<{}>();", default_index));
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            let val_cpp = self.cpp_type_owned(*dftid);
+                            self.e.wln(&format!(
+                                "{}& tmp = out.value.emplace<{}>();",
+                                val_cpp, default_index
+                            ));
+                            self.emit_read_member(*dftid, "tmp");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 } else {
@@ -394,9 +430,17 @@ impl<'a> CppEmitter<'a> {
                 for (idx, (_val, vt)) in v.members.iter().enumerate() {
                     self.e.wln(&format!("case {}: {{", idx));
                     self.e.indent();
-                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", idx));
-                    self.emit_write_member(*vt, "ptr");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*vt).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", idx));
+                            self.emit_write_member(*vt, "ptr");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 }
@@ -404,9 +448,17 @@ impl<'a> CppEmitter<'a> {
                     let default_index = v.members.len();
                     self.e.wln(&format!("case {}: {{", default_index));
                     self.e.indent();
-                    self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", default_index));
-                    self.emit_write_member(*dftid, "ptr");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*dftid).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            self.e.wln(&format!("const auto& ptr = std::get<{}>(in.value);", default_index));
+                            self.emit_write_member(*dftid, "ptr");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 }
@@ -464,9 +516,17 @@ impl<'a> CppEmitter<'a> {
                 for (idx, (_val, vt)) in v.members.iter().enumerate() {
                     self.e.wln(&format!("case {}: {{", idx));
                     self.e.indent();
-                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", idx));
-                    self.emit_write_member(*vt, "*ptr");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*vt).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", idx));
+                            self.emit_write_member(*vt, "*ptr");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 }
@@ -474,9 +534,17 @@ impl<'a> CppEmitter<'a> {
                     let default_index = v.members.len();
                     self.e.wln(&format!("case {}: {{", default_index));
                     self.e.indent();
-                    self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", default_index));
-                    self.emit_write_member(*dftid, "*ptr");
-                    self.e.wln("return true;");
+                    let t = self.e.module.lookup(*dftid).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => {
+                            self.e.wln("return true;");
+                        }
+                        _ => {
+                            self.e.wln(&format!("auto ptr = std::get<{}>(in.value);", default_index));
+                            self.emit_write_member(*dftid, "*ptr");
+                            self.e.wln("return true;");
+                        }
+                    }
                     self.e.dedent();
                     self.e.wln("}");
                 }
@@ -498,6 +566,9 @@ impl<'a> CppEmitter<'a> {
         match &ty.kind {
             TypeKind::Primitive(_p) => {
                 self.e.wln(&format!("if (!detail::read_raw(r, {})) return false;", lhs));
+            }
+            TypeKind::Void => {
+                self.e.wln("/* void: nothing to read */");
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -573,6 +644,9 @@ impl<'a> CppEmitter<'a> {
                     "if (!detail::write_raw(w, {})) return false;",
                     expr
                 ));
+            }
+            TypeKind::Void => {
+                self.e.wln("/* void: nothing to write */");
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -652,6 +726,7 @@ impl<'a> CppEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.cpp_primitive(p),
+            TypeKind::Void => "std::monostate".to_string(),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -687,6 +762,7 @@ impl<'a> CppEmitter<'a> {
     fn cpp_type_from_type(&self, ty: &Type) -> String {
         match &ty.kind {
             TypeKind::Primitive(p) => self.cpp_primitive(p),
+            TypeKind::Void => "std::monostate".to_string(),
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
             | TypeKind::Pack(_)
@@ -719,6 +795,7 @@ impl<'a> CppEmitter<'a> {
         let ty = self.e.module.lookup(tid).expect("unknown type");
         match &ty.kind {
             TypeKind::Primitive(p) => self.cpp_primitive(p),
+            TypeKind::Void => "std::monostate".to_string(),
             TypeKind::Enum(_) => {
                 if let Some(name) = self.e.name_of(tid) {
                     name.to_string()

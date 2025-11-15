@@ -40,15 +40,21 @@ def build_expected() -> List[basic.Root]:
     r2.var = basic.MyVariant(tag=1, value=other)
     expected.append(r2)
 
-    # 3) Variant = SmallSeq with floats
+    # 3) Variant = void
+    r3 = basic.Root()
+    r3.name = b"void"
+    r3.var = basic.MyVariant(tag=2, value=None)
+    expected.append(r3)
+
+    # 4) Variant = SmallSeq with floats
     r3 = basic.Root()
     r3.name = b"floats"
     seq = basic.SmallSeq()
     seq.list = [1.0, 2.5, -3.25, 0.0]
-    r3.var = basic.MyVariant(tag=2, value=seq)
+    r3.var = basic.MyVariant(tag=3, value=seq)
     expected.append(r3)
 
-    # 4) Another MyPOD with larger values
+    # 5) Another MyPOD with larger values
     r4 = basic.Root()
     r4.name = b"pod-two"
     pod2 = basic.MyPOD()
@@ -57,12 +63,12 @@ def build_expected() -> List[basic.Root]:
     r4.var = basic.MyVariant(tag=0, value=pod2)
     expected.append(r4)
 
-    # 5) Another SmallSeq, longer
+    # 6) Another SmallSeq, longer
     r5 = basic.Root()
     r5.name = b"seq-long"
     seq2 = basic.SmallSeq()
     seq2.list = [i * 0.5 for i in range(10)]
-    r5.var = basic.MyVariant(tag=2, value=seq2)
+    r5.var = basic.MyVariant(tag=3, value=seq2)
     expected.append(r5)
 
     return expected
@@ -106,12 +112,16 @@ def compare_expected_actual(expected: List[basic.Root], actual: List[basic.Root]
             demand(int(ao.first.b_thing) == int(eo.first.b_thing), f"MyOtherPOD.first.b_thing at {i}")
             for j in range(4):
                 demand(int(ao.second[j]) == int(eo.second[j]), f"MyOtherPOD.second[{j}] at {i}")
-        else:
+        elif tag == 2:
+            demand(a.var.value is None, f"void at {i}")
+        elif tag == 3:
             es = e.var.value
             aseq = a.var.value
             demand(len(aseq.list) == len(es.list), f"SmallSeq.size at {i}")
             for j, (x, y) in enumerate(zip(aseq.list, es.list)):
                 demand(x == y, f"SmallSeq.value[{j}] at {i}")
+        else:
+            demand(False, f"unexpected tag {tag} at {i}")
 
 
 def main() -> None:

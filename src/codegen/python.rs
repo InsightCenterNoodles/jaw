@@ -143,7 +143,7 @@ impl<'a> PyEmitter<'a> {
                 TypeKind::Sequence(s) => self.emit_sequence_type(&name_owned, s),
                 TypeKind::Variant(v) => self.emit_variant_type(&name_owned, v),
                 TypeKind::Alias(_) => { /* not implemented */ }
-                TypeKind::Primitive(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {}
+                TypeKind::Primitive(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) | TypeKind::Void => {}
             }
             self.e.wln("");
             self.emit_read_fn(tid, &name_owned);
@@ -386,7 +386,15 @@ impl<'a> PyEmitter<'a> {
                     for (val, vt) in &v.members {
                         self.e.wln(&format!("if tag == {}:", val));
                         self.e.indent();
-                        self.emit_read_member_assign(*vt, "value");
+                        let t = self.e.module.lookup(*vt).unwrap();
+                        match &t.kind {
+                            TypeKind::Void => {
+                                self.e.wln("value = None");
+                            }
+                            _ => {
+                                self.emit_read_member_assign(*vt, "value");
+                            }
+                        }
                         self.e.wln("handled = True");
                         self.e.wln("# fallthrough to return");
                         self.e.dedent();
@@ -395,7 +403,11 @@ impl<'a> PyEmitter<'a> {
                         self.e.wln("if not handled:");
                         self.e.indent();
                         self.e.wln(&format!("# default case ({})", dfval));
-                        self.emit_read_member_assign(*dftid, "value");
+                        let t = self.e.module.lookup(*dftid).unwrap();
+                        match &t.kind {
+                            TypeKind::Void => self.e.wln("value = None"),
+                            _ => self.emit_read_member_assign(*dftid, "value"),
+                        }
                         self.e.dedent();
                     } else {
                         self.e.wln(
@@ -406,7 +418,11 @@ impl<'a> PyEmitter<'a> {
                     self.e.wln("return out");
                 } else if let Some((_dfval, dftid)) = &v.default {
                     // No members but default present
-                    self.emit_read_member_assign(*dftid, "value");
+                    let t = self.e.module.lookup(*dftid).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => self.e.wln("value = None"),
+                        _ => self.emit_read_member_assign(*dftid, "value"),
+                    }
                     self.e.wln(&format!("return {}(tag=tag, value=value)", cls));
                 } else {
                     self.e.wln("raise ValueError('variant has no alternatives')");
@@ -455,13 +471,21 @@ impl<'a> PyEmitter<'a> {
                     for (val, vt) in &v.members {
                         self.e.wln(&format!("if int(obj.tag) == {}:", val));
                         self.e.indent();
-                        self.emit_write_member(*vt, "obj.value");
+                        let t = self.e.module.lookup(*vt).unwrap();
+                        match &t.kind {
+                            TypeKind::Void => self.e.wln("pass"),
+                            _ => self.emit_write_member(*vt, "obj.value"),
+                        }
                         self.e.wln("return");
                         self.e.dedent();
                     }
                     if let Some((_dfval, dftid)) = &v.default {
                         self.e.wln("# default branch");
-                        self.emit_write_member(*dftid, "obj.value");
+                        let t = self.e.module.lookup(*dftid).unwrap();
+                        match &t.kind {
+                            TypeKind::Void => self.e.wln("return"),
+                            _ => self.emit_write_member(*dftid, "obj.value"),
+                        }
                         self.e.wln("return");
                     } else {
                         self.e.wln(
@@ -469,7 +493,11 @@ impl<'a> PyEmitter<'a> {
                         );
                     }
                 } else if let Some((_dfval, dftid)) = &v.default {
-                    self.emit_write_member(*dftid, "obj.value");
+                    let t = self.e.module.lookup(*dftid).unwrap();
+                    match &t.kind {
+                        TypeKind::Void => self.e.wln("pass"),
+                        _ => self.emit_write_member(*dftid, "obj.value"),
+                    }
                 } else {
                     self.e.wln("raise ValueError('variant has no alternatives')");
                 }
@@ -485,6 +513,9 @@ impl<'a> PyEmitter<'a> {
             TypeKind::Primitive(p) => {
                 let m = self.py_read_prim(p);
                 self.e.wln(&format!("{} = r.{}()", lhs, m));
+            }
+            TypeKind::Void => {
+                self.e.wln(&format!("{} = None", lhs));
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
@@ -550,6 +581,9 @@ impl<'a> PyEmitter<'a> {
                 let m = self.py_read_prim(p);
                 self.e.wln(&format!("{} = r.{}()", lhs_ident, m));
             }
+            TypeKind::Void => {
+                self.e.wln(&format!("{} = None", lhs_ident));
+            }
             _ => {
                 if let Some(name) = self.e.name_of(tid) {
                     let func = format!("read_{}", sanitize_ident(name, "T"));
@@ -569,6 +603,9 @@ impl<'a> PyEmitter<'a> {
                 let m = self.py_read_prim(p);
                 self.e.wln(&format!("{}.append(r.{}())", lhs_list, m));
             }
+            TypeKind::Void => {
+                self.e.wln("raise NotImplementedError()  # void in arrays not allowed");
+            }
             _ => {
                 if let Some(name) = self.e.name_of(tid) {
                     let func = format!("read_{}", sanitize_ident(name, "T"));
@@ -586,6 +623,9 @@ impl<'a> PyEmitter<'a> {
             TypeKind::Primitive(p) => {
                 let m = self.py_write_prim(p);
                 self.e.wln(&format!("w.{}({})", m, expr));
+            }
+            TypeKind::Void => {
+                self.e.wln("pass");
             }
             TypeKind::Enum(_)
             | TypeKind::Bitfld(_)
