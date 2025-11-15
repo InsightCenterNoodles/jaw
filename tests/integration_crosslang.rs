@@ -62,6 +62,19 @@ fn regenerate_bindings() -> Result<(), Box<dyn std::error::Error>> {
         w.flush()?;
     }
 
+    // Generate Swift
+    {
+        let pm = PartialModule::from_string(stem, &src)?.compile();
+        let out_path = root.join("generated/swift/basic.swift");
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let f = fs::File::create(&out_path)?;
+        let mut w = std::io::BufWriter::new(f);
+        emit_for(KnownGenerators::SWIFT, pm, &mut w)?;
+        w.flush()?;
+    }
+
     Ok(())
 }
 
@@ -201,6 +214,43 @@ fn run_rust_read(exe: &Path, in_path: &Path) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+fn has_swiftc() -> bool {
+    has_prog("swiftc", "-version")
+}
+
+fn swift_build_driver() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let root = repo_root();
+    let swift_dir = root.join("generated/swift");
+    let exe = swift_dir.join(if cfg!(target_os = "windows") { "jaw_swift.exe" } else { "jaw_swift" });
+    let status = Command::new("swiftc")
+        .arg("-O")
+        .arg(swift_dir.join("driver.swift"))
+        .arg(swift_dir.join("basic.swift"))
+        .arg("-o")
+        .arg(&exe)
+        .status()?;
+    if !status.success() {
+        return Err("swiftc build failed".into());
+    }
+    Ok(exe)
+}
+
+fn run_swift_dump(exe: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(exe).arg("--dump").arg(out_path).status()?;
+    if !status.success() {
+        return Err("Swift driver --dump failed".into());
+    }
+    Ok(())
+}
+
+fn run_swift_read(exe: &Path, in_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new(exe).arg("--read").arg(in_path).status()?;
+    if !status.success() {
+        return Err("Swift driver --read failed".into());
+    }
+    Ok(())
+}
+
 #[test]
 fn cross_language_roundtrip_and_compatibility() -> Result<(), Box<dyn std::error::Error>> {
     // Pre-flight checks
@@ -254,6 +304,26 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), Box<dyn std::error
     run_rust_dump(&rust_exe, &rs_dump)?;
     run_python_read(py, &rs_dump)?;
     run_cpp_read(&cpp_exe, &rs_dump)?;
+
+    // 7) If Swift is available, build and run cross checks
+    if has_swiftc() {
+        // Ensure driver exists
+        let swift_exe = swift_build_driver()?;
+        let swift_dump = dumps_dir.join("from_swift.bin");
+
+        // Cross-verify dumps with Swift
+        run_swift_read(&swift_exe, &cpp_dump)?;
+        run_swift_read(&swift_exe, &py_dump)?;
+        run_swift_read(&swift_exe, &rs_dump)?;
+
+        // Swift dump verified by others
+        run_swift_dump(&swift_exe, &swift_dump)?;
+        run_python_read(py, &swift_dump)?;
+        run_cpp_read(&cpp_exe, &swift_dump)?;
+        run_rust_read(&rust_exe, &swift_dump)?;
+    } else {
+        eprintln!("skipping: swiftc not found");
+    }
 
     // Do not assert dumps are byte-for-byte identical: padding bytes will be garbage
 

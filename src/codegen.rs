@@ -17,6 +17,7 @@ mod cpp;
 mod python;
 mod common;
 mod rust;
+mod swift;
 
 /// Stable set of built-in generators exposed by the CLI.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -24,6 +25,7 @@ pub enum KnownGenerators {
     CPP,
     PYTHON,
     RUST,
+    SWIFT,
 }
 
 /// Errors surfaced by code generation.
@@ -47,5 +49,6 @@ pub fn emit_for(
         KnownGenerators::CPP => cpp::emit_cpp_header(module, file),
         KnownGenerators::PYTHON => python::emit_python(module, file),
         KnownGenerators::RUST => rust::emit_rust(module, file),
+        KnownGenerators::SWIFT => swift::emit_swift(module, file),
     }
 }
