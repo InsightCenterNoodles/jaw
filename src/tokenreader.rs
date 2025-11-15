@@ -162,7 +162,7 @@ impl TokenReader {
 mod tests {
     use super::*;
     use crate::module::ModuleBuildError;
-    use crate::tokens::{self, Keyword, Symbol, TokenKind};
+    use crate::tokens::{self, Keyword, Symbol};
 
     fn toks(src: &str) -> Vec<crate::tokens::Token> {
         tokens::lex_str(src).expect("lexing failed")

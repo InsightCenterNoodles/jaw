@@ -143,19 +143,6 @@ def read_MyFlags(r):
 def write_MyFlags(w, obj):
     w.write_u8(int(obj.value))
 
-class MyOtherPOD(ctypes.Structure):
-    _fields_ = [
-        ('first', MyPOD),
-        ('second', (ctypes.c_uint8 * 4)),
-    ]
-
-def read_MyOtherPOD(r):
-    size = ctypes.sizeof(MyOtherPOD)
-    data = r.read_bytes(size)
-    return MyOtherPOD.from_buffer_copy(data)
-def write_MyOtherPOD(w, obj):
-    w.write_raw(obj)
-
 class SmallSeq:
     def __init__(self):
         self.list = None
@@ -171,6 +158,19 @@ def write_SmallSeq(w, obj):
     w.write_u8(len(obj.list))
     for __v in obj.list:
         w.write_f32(__v)
+
+class MyOtherPOD(ctypes.Structure):
+    _fields_ = [
+        ('first', MyPOD),
+        ('second', (ctypes.c_uint8 * 4)),
+    ]
+
+def read_MyOtherPOD(r):
+    size = ctypes.sizeof(MyOtherPOD)
+    data = r.read_bytes(size)
+    return MyOtherPOD.from_buffer_copy(data)
+def write_MyOtherPOD(w, obj):
+    w.write_raw(obj)
 
 class MyVariant:
     def __init__(self, tag=0, value=None):
