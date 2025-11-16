@@ -11,6 +11,7 @@
 
 mod codegen;
 mod module;
+mod reader;
 mod tokenreader;
 mod tokens;
 
