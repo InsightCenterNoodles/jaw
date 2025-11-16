@@ -57,6 +57,16 @@ impl<'a> CppEmitter<'a> {
         self.e.wln("template <typename Reader, typename T> inline bool read_raw(Reader& r, T& v) { return r.read_raw(v); }");
         self.e.wln("");
         self.e.wln("template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }");
+        self.e.wln("");
+        self.e.wln("template <typename Reader> inline bool borrow_bytes(Reader& r, size_t n, std::span<const std::byte>& out) { return r.borrow_bytes(n, out); }");
+        self.e.wln("template <typename Reader, typename T> inline bool borrow_span(Reader& r, size_t n, std::span<const T>& out) {");
+        self.e.indent();
+        self.e.wln("std::span<const std::byte> bytes;");
+        self.e.wln("if (!borrow_bytes(r, n * sizeof(T), bytes)) return false;");
+        self.e.wln("out = std::span<const T>(reinterpret_cast<const T*>(bytes.data()), n);");
+        self.e.wln("return true;");
+        self.e.dedent();
+        self.e.wln("}");
         self.e.dedent();
         self.e.wln("} // namespace detail");
         self.e.wln("");
@@ -100,6 +110,7 @@ impl<'a> CppEmitter<'a> {
             self.emit_read_fn(tid, &name_owned);
             self.emit_write_fn(tid, &name_owned);
             if matches!(ty.kind, TypeKind::Sequence(_) | TypeKind::Variant(_)) {
+                self.emit_read_fn_view(tid, &name_owned);
                 self.emit_write_fn_view(tid, &name_owned);
             }
             self.e.wln("");
@@ -552,6 +563,87 @@ impl<'a> CppEmitter<'a> {
                 self.e.dedent();
                 self.e.wln("}");
                 self.e.wln("return true;");
+            }
+            _ => {
+                self.e.wln("return false;");
+            }
+        }
+        self.e.dedent();
+        self.e.wln("}");
+    }
+
+    fn emit_read_fn_view(&mut self, tid: TypeID, name: &str) {
+        let vname = format!("{}View", name);
+        self.e.wln(&format!(
+            "template <typename Reader> inline bool read(Reader& r, {}& out) {{",
+            vname
+        ));
+        self.e.indent();
+        let ty = self.e.module.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Sequence(s) => {
+                for (mname, mtid) in &s.members {
+                    let field = format!("out.{}", mname);
+                    let mty = self.e.module.lookup(*mtid).unwrap();
+                    match &mty.kind {
+                        TypeKind::Primitive(_p) => {
+                            self.e.wln(&format!("if (!detail::read_raw(r, {})) return false;", field));
+                        }
+                        TypeKind::DynamicArray(ArrayKind::Dynamic { size_type, value_type }) => {
+                            // zero-copy only for u8
+                            let vty = self.e.module.lookup(*value_type).unwrap();
+                            match &vty.kind {
+                                TypeKind::Primitive(Primitive::U8) => {
+                                    let st = self.e.module.lookup(*size_type).unwrap();
+                                    let scpp = match &st.kind { TypeKind::Primitive(p) => self.cpp_primitive(p), _ => "size_t".into() };
+                                    self.e.wln("{");
+                                    self.e.indent();
+                                    self.e.wln(&format!("{} __n{{}};", scpp));
+                                    self.e.wln("if (!detail::read_raw(r, __n)) return false;");
+                                    self.e.wln("std::span<const uint8_t> __span;");
+                                    self.e.wln("if (!detail::borrow_span<uint8_t>(r, static_cast<size_t>(__n), __span)) return false;");
+                                    self.e.wln(&format!("{} = __span;", field));
+                                    self.e.dedent();
+                                    self.e.wln("}");
+                                }
+                                _ => {
+                                    self.e.wln("return false; // unsupported view read for non-u8 array");
+                                }
+                            }
+                        }
+                        TypeKind::FixedArray(ArrayKind::Fixed { count, value_type }) => {
+                            let vty = self.e.module.lookup(*value_type).unwrap();
+                            match &vty.kind {
+                                TypeKind::Primitive(Primitive::U8) => {
+                                    self.e.wln("{");
+                                    self.e.indent();
+                                    self.e.wln("std::span<const uint8_t> __span;");
+                                    self.e.wln(&format!(
+                                        "if (!detail::borrow_span<uint8_t>(r, {}, __span)) return false;",
+                                        count
+                                    ));
+                                    self.e.wln(&format!(
+                                        "{} = std::span<const uint8_t, {}>(__span.data(), {});",
+                                        field, count, count
+                                    ));
+                                    self.e.dedent();
+                                    self.e.wln("}");
+                                }
+                                _ => {
+                                    self.e.wln("return false; // unsupported view read for non-u8 fixed array");
+                                }
+                            }
+                        }
+                        _ => {
+                            self.e.wln("return false; // unsupported composite in SequenceView read");
+                        }
+                    }
+                }
+                self.e.wln("return true;");
+            }
+            TypeKind::Variant(_v) => {
+                // Not supported generically: cannot create references to nested composites from stream
+                self.e.wln("(void)r; (void)out; return false;");
             }
             _ => {
                 self.e.wln("return false;");

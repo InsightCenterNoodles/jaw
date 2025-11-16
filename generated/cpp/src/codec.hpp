@@ -40,4 +40,11 @@ struct VecReader {
 
         return read_to(std::as_writable_bytes(std::span(&t, 1)));
     }
+
+    bool borrow_bytes(size_t n, std::span<const std::byte>& out) {
+        if (n > src.size()) { return false; }
+        out = src.first(n);
+        src = src.subspan(n);
+        return true;
+    }
 };

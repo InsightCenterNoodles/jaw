@@ -120,6 +120,11 @@ impl<'a> RustEmitter<'a> {
             self.e.wln("}");
         }
         self.e.wln("");
+        // Borrowing slice-backed reader for zero-copy view decoding of bytes
+        self.e.wln("pub struct SliceReader<'a> { buf: &'a [u8], pos: usize }");
+        self.e.wln("impl<'a> SliceReader<'a> { pub fn new(buf: &'a [u8]) -> Self { Self { buf, pos: 0 } } pub fn borrow_bytes(&mut self, n: usize) -> io::Result<&'a [u8]> { if self.pos + n > self.buf.len() { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, \"not enough bytes\")); } let start = self.pos; self.pos += n; Ok(&self.buf[start..start+n]) } }");
+        self.e.wln("impl<'a> Read for SliceReader<'a> { fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> { let avail = self.buf.len().saturating_sub(self.pos); let n = avail.min(dst.len()); if n == 0 { return Ok(0); } dst[..n].copy_from_slice(&self.buf[self.pos..self.pos+n]); self.pos += n; Ok(n) } }");
+        self.e.wln("");
     }
 
     /// Emit all named types and their helpers in dependency order.
@@ -156,6 +161,27 @@ impl<'a> RustEmitter<'a> {
             self.emit_write_fn(tid, &name);
             if matches!(ty.kind, TypeKind::Sequence(_) | TypeKind::Variant(_)) {
                 self.emit_write_fn_view(tid, &name);
+                // Only generate read_<Name>View for sequences that are borrowable (primitives and u8 arrays)
+                let mut borrowable = false;
+                if let TypeKind::Sequence(ref s) = ty.kind {
+                    borrowable = true;
+                    for (_mname, mtid) in &s.members {
+                        let mty = self.e.module.lookup(*mtid).unwrap();
+                        match &mty.kind {
+                            TypeKind::Primitive(_) => {}
+                            TypeKind::DynamicArray(ArrayKind::Dynamic { value_type, .. }) => {
+                                let vty = self.e.module.lookup(*value_type).unwrap();
+                                if !matches!(vty.kind, TypeKind::Primitive(Primitive::U8)) { borrowable = false; break; }
+                            }
+                            TypeKind::FixedArray(ArrayKind::Fixed { value_type, .. }) => {
+                                let vty = self.e.module.lookup(*value_type).unwrap();
+                                if !matches!(vty.kind, TypeKind::Primitive(Primitive::U8)) { borrowable = false; break; }
+                            }
+                            _ => { borrowable = false; break; }
+                        }
+                    }
+                }
+                if borrowable { self.emit_read_fn_view(tid, &name); }
             }
             self.e.wln("");
         }
@@ -647,6 +673,75 @@ impl<'a> RustEmitter<'a> {
             }
             _ => {}
         }
+    }
+
+    fn emit_read_fn_view(&mut self, tid: TypeID, name: &str) {
+        let rs_name = sanitize_ident(name, "T");
+        let view_name = format!("{}View", rs_name);
+        self.e.wln(&format!("pub fn read_{}View<'a>(r: &mut SliceReader<'a>) -> io::Result<{}<'a>> {{", rs_name, view_name));
+        self.e.indent();
+        let ty = self.e.module.lookup(tid).unwrap();
+        match &ty.kind {
+            TypeKind::Sequence(s) => {
+                // Prepare fields
+                for (mname, mtid) in &s.members {
+                    let mty = self.e.module.lookup(*mtid).unwrap();
+                    match &mty.kind {
+                        TypeKind::Primitive(p) => {
+                            let m = self.rs_read_prim(p);
+                            self.e.wln(&format!("let {} = {}(r)?;", sanitize_ident(mname, "T"), m));
+                        }
+                        TypeKind::DynamicArray(ArrayKind::Dynamic { size_type, value_type }) => {
+                            // Only support u8 element for zero-copy
+                            let vty = self.e.module.lookup(*value_type).unwrap();
+                            match &vty.kind {
+                                TypeKind::Primitive(Primitive::U8) => {
+                                    // read size then borrow
+                                    let st = self.e.module.lookup(*size_type).unwrap();
+                                    let sp = match &st.kind { TypeKind::Primitive(p) => self.rust_primitive(p), _ => "usize" };
+                                    let sz_fn = match &st.kind { TypeKind::Primitive(p) => self.rs_read_prim(p), _ => "read_u64" };
+                                    let id = sanitize_ident(mname, "T");
+                                    self.e.wln(&format!("let __n: {} = {}(r)?;", sp, sz_fn));
+                                    self.e.wln(&format!("let {} = r.borrow_bytes(__n as usize)?;", id));
+                                }
+                                _ => {
+                                    self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"unsupported view read for non-u8 array\"));");
+                                }
+                            }
+                        }
+                        TypeKind::FixedArray(ArrayKind::Fixed { count, value_type }) => {
+                            let vty = self.e.module.lookup(*value_type).unwrap();
+                            match &vty.kind {
+                                TypeKind::Primitive(Primitive::U8) => {
+                                    let id = sanitize_ident(mname, "T");
+                                    self.e.wln(&format!("let {} = r.borrow_bytes({})?;", id, count));
+                                }
+                                _ => {
+                                    self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"unsupported view read for non-u8 fixed array\"));");
+                                }
+                            }
+                        }
+                        _ => {
+                            self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"unsupported composite in SequenceView read\"));");
+                        }
+                    }
+                }
+                // Construct view
+                self.e.wln(&format!("Ok({} {{", view_name));
+                self.e.indent();
+                for (mname, _mtid) in &s.members {
+                    let id = sanitize_ident(mname, "T");
+                    self.e.wln(&format!("{}: {},", id, id));
+                }
+                self.e.dedent();
+                self.e.wln("})");
+            }
+            _ => {
+                self.e.wln("return Err(io::Error::new(io::ErrorKind::Other, \"unsupported type for view read\"));");
+            }
+        }
+        self.e.dedent();
+        self.e.wln("}");
     }
 
     /// Helper: function name for reading a primitive.

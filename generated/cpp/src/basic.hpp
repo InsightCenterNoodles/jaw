@@ -16,7 +16,31 @@ namespace basic {
         template <typename Reader, typename T> inline bool read_raw(Reader& r, T& v) { return r.read_raw(v); }
         
         template <typename Writer, typename T> inline bool write_raw(Writer& w, T const& v) { return w.write_raw(v); }
+        
+        template <typename Reader> inline bool borrow_bytes(Reader& r, size_t n, std::span<const std::byte>& out) { return r.borrow_bytes(n, out); }
+        template <typename Reader, typename T> inline bool borrow_span(Reader& r, size_t n, std::span<const T>& out) {
+            std::span<const std::byte> bytes;
+            if (!borrow_bytes(r, n * sizeof(T), bytes)) return false;
+            out = std::span<const T>(reinterpret_cast<const T*>(bytes.data()), n);
+            return true;
+        }
     } // namespace detail
+    
+    enum class PlainEnum : uint8_t {
+        F1 = 0,
+        F2 = 1,
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
+        uint8_t tmp{};
+        if (!detail::read_raw(r, tmp)) return false;
+        out = static_cast<PlainEnum>(tmp);
+        return true;
+    }
+    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
+        uint8_t tmp = static_cast<uint8_t>(in);
+        return detail::write_raw(w, tmp);
+    }
     
     enum class BetterEnum : uint8_t {
         A = 0,
@@ -35,22 +59,6 @@ namespace basic {
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const BetterEnum& in) {
-        uint8_t tmp = static_cast<uint8_t>(in);
-        return detail::write_raw(w, tmp);
-    }
-    
-    enum class PlainEnum : uint8_t {
-        F1 = 0,
-        F2 = 1,
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, PlainEnum& out) {
-        uint8_t tmp{};
-        if (!detail::read_raw(r, tmp)) return false;
-        out = static_cast<PlainEnum>(tmp);
-        return true;
-    }
-    template <typename Writer> inline bool write(Writer& w, const PlainEnum& in) {
         uint8_t tmp = static_cast<uint8_t>(in);
         return detail::write_raw(w, tmp);
     }
@@ -87,6 +95,18 @@ namespace basic {
         return detail::write_raw(w, in.value);
     }
     
+    struct MyOtherPOD {
+        MyPOD first;
+        std::array<uint8_t, 4> second;
+    };
+    
+    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
+        return r.read_raw(out);
+    }
+    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
+        return w.write_raw(in);
+    }
+    
     struct SmallSeq {
         std::vector<float> list;
     };
@@ -115,6 +135,10 @@ namespace basic {
         }
         return true;
     }
+    template <typename Reader> inline bool read(Reader& r, SmallSeqView& out) {
+        return false; // unsupported view read for non-u8 array
+        return true;
+    }
     template <typename Writer> inline bool write(Writer& w, const SmallSeqView& in) {
         {
             uint8_t __n = static_cast<uint8_t>(in.list.size());
@@ -124,18 +148,6 @@ namespace basic {
             }
         }
         return true;
-    }
-    
-    struct MyOtherPOD {
-        MyPOD first;
-        std::array<uint8_t, 4> second;
-    };
-    
-    template <typename Reader> inline bool read(Reader& r, MyOtherPOD& out) {
-        return r.read_raw(out);
-    }
-    template <typename Writer> inline bool write(Writer& w, const MyOtherPOD& in) {
-        return w.write_raw(in);
     }
     
     struct MyVariant { std::variant<MyPOD, MyOtherPOD, std::monostate, SmallSeq> value; };
@@ -200,6 +212,9 @@ namespace basic {
             default: return false;
         }
         return true;
+    }
+    template <typename Reader> inline bool read(Reader& r, MyVariantView& out) {
+        (void)r; (void)out; return false;
     }
     template <typename Writer> inline bool write(Writer& w, const MyVariantView& in) {
         size_t __idx = in.value.index();
@@ -266,6 +281,17 @@ namespace basic {
             }
         }
         if (!write(w, in.var)) return false;
+        return true;
+    }
+    template <typename Reader> inline bool read(Reader& r, RootView& out) {
+        {
+            uint8_t __n{};
+            if (!detail::read_raw(r, __n)) return false;
+            std::span<const uint8_t> __span;
+            if (!detail::borrow_span<uint8_t>(r, static_cast<size_t>(__n), __span)) return false;
+            out.name = __span;
+        }
+        return false; // unsupported composite in SequenceView read
         return true;
     }
     template <typename Writer> inline bool write(Writer& w, const RootView& in) {
