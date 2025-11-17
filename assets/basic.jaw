@@ -20,7 +20,7 @@ enum PlainEnum : u8
 enum BetterEnum : u8
 - A = 0
 - B = 1
-= DEFAULT = 255
+> DEFAULT = 255
 
 bits MyFlags : u8
 - 0    is_thing : u8
@@ -34,7 +34,7 @@ variant MyVariant : u8
 - 0 => MyPOD
 - 1 => MyOtherPOD
 - 2 => void
-= 3 => SmallSeq
+> 3 => SmallSeq
 
 seq Root
 - name : ShortString
