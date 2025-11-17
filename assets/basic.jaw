@@ -13,6 +13,8 @@ pack MyOtherPOD
 - first : MyPOD
 - second : FixedString
 
+alias Alpha : MyOtherPOD
+
 enum PlainEnum : u8
 - F1 = 0
 - F2 = 1
