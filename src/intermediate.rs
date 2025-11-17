@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Position {
     line: usize,
     column: usize,
@@ -26,6 +26,8 @@ impl StructMember {
         let mem_ty = consume_member_start(&mut iter)?;
 
         let (place, name) = iter.next()?;
+
+        dbg!(place, name);
 
         demand_string(&mut iter, ":");
 
@@ -61,6 +63,8 @@ impl EnumMember {
     fn parse(input: (usize, String)) -> Option<(MemberType, Self)> {
         let mut iter = make_mem_split(&input);
         let mem_ty = consume_member_start(&mut iter)?;
+
+        dbg!(mem_ty);
 
         let (place, name) = iter.next()?;
 
@@ -102,7 +106,7 @@ impl BitfldMember {
         let mut iter = make_mem_split(&input);
         let mem_ty = consume_member_start(&mut iter)?;
 
-        let range = iter.next()?.1.to_string().unwrap();
+        let range = iter.next()?.1.to_string();
 
         let (place, name) = iter.next()?;
 
@@ -147,14 +151,14 @@ impl VariantMember {
 
         demand_string(&mut iter, "=>");
 
-        let (place, ty) = iter.next()?.1.to_string();
+        let (place, ty) = iter.next()?;
 
         demand_done(iter);
 
         Some((
             mem_ty,
             Self {
-                ty,
+                ty: ty.into(),
                 value,
                 defined_at: place,
             },
@@ -194,6 +198,7 @@ pub struct FixedArray {
     pub value_type: TypeName,
 }
 
+#[derive(Debug)]
 pub enum TypeKind {
     Alias(Alias),
     Pack(Pack),
@@ -205,6 +210,7 @@ pub enum TypeKind {
     FixedArray(FixedArray),
 }
 
+#[derive(Debug)]
 pub struct Type {
     pub ident: TypeName,
     pub defined_at: Position,
@@ -227,8 +233,10 @@ impl Module {
         };
 
         while let Some(line) = reader.next_line() {
+            dbg!(&line);
+
             // parse header
-            let mut parts = line.1.split_whitespace().peekable();
+            let mut parts = line.1.split_whitespace();
 
             let Some(decl_type) = parts.next() else {
                 continue;
@@ -238,16 +246,9 @@ impl Module {
                 continue;
             };
 
-            let extra = if let Some(&maybe_colon) = parts.peek() {
-                if maybe_colon == ":" {
-                    parts.next()?;
-                    parts.next()
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            let extra = line.1.split_once(':').map(|x| x.1.trim());
+
+            dbg!(extra);
 
             match decl_type {
                 "pack" => module.definitions.push(Type {
@@ -258,11 +259,59 @@ impl Module {
                     kind: reader.parse_pack(extra)?,
                     ident: decl_name.to_owned(),
                 }),
-                x => todo!(),
+                "seq" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_seq(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                "enum" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_enum(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                "bits" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_bitfld(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                "variant" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_variant(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                "fixed_array" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_fixed_array(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                "dyn_array" => module.definitions.push(Type {
+                    defined_at: Position {
+                        line: line.0,
+                        column: 0,
+                    },
+                    kind: reader.parse_dyn_array(extra)?,
+                    ident: decl_name.to_owned(),
+                }),
+                _ => return None,
             }
         }
 
-        todo!()
+        Some(module)
     }
 }
 
@@ -313,7 +362,9 @@ impl Reader {
         let mut def = None;
 
         loop {
-            let l = self.has_member_start()?;
+            let Some(l) = self.has_member_start() else {
+                break;
+            };
 
             let Some(item) = f(l) else {
                 break;
@@ -335,22 +386,24 @@ impl Reader {
         let Some((_, Ok(line))) = self.source.peek() else {
             return None;
         };
-        if line.starts_with("-") || line.starts_with("=") {
+        if line.starts_with("-") || line.starts_with(">") {
             self.next_line()
         } else {
             None
         }
     }
 
-    fn parse_pack<'a, I>(&mut self, _extra: Option<&str>) -> Option<TypeKind> {
+    fn parse_pack(&mut self, _extra: Option<&str>) -> Option<TypeKind> {
         let (members, default) = self.member_iter(StructMember::parse)?;
+
+        dbg!(&members);
 
         assert!(default.is_none());
 
         Some(TypeKind::Pack(Pack { members }))
     }
 
-    fn parse_seq<'a, I>(&mut self, _extra: Option<&str>) -> Option<TypeKind> {
+    fn parse_seq(&mut self, _extra: Option<&str>) -> Option<TypeKind> {
         let (members, default) = self.member_iter(StructMember::parse)?;
 
         assert!(default.is_none());
@@ -358,7 +411,7 @@ impl Reader {
         Some(TypeKind::Sequence(Sequence { members }))
     }
 
-    fn parse_enum<'a, I>(&mut self, extra: Option<&str>) -> Option<TypeKind> {
+    fn parse_enum(&mut self, extra: Option<&str>) -> Option<TypeKind> {
         let ty = extra.unwrap().to_string();
 
         let (members, default) = self.member_iter(EnumMember::parse)?;
@@ -370,7 +423,7 @@ impl Reader {
         }))
     }
 
-    fn parse_bitfld<'a, I>(&mut self, extra: Option<&str>) -> Option<TypeKind> {
+    fn parse_bitfld(&mut self, extra: Option<&str>) -> Option<TypeKind> {
         let ty = extra.unwrap().to_string();
 
         let (members, default) = self.member_iter(BitfldMember::parse)?;
@@ -380,12 +433,10 @@ impl Reader {
         Some(TypeKind::Bitfld(Bitfld { ty, members }))
     }
 
-    fn parse_variant<'a, I>(&mut self, extra: Option<&str>) -> Option<TypeKind> {
+    fn parse_variant(&mut self, extra: Option<&str>) -> Option<TypeKind> {
         let ty = extra.unwrap().to_string();
 
         let (members, default) = self.member_iter(VariantMember::parse)?;
-
-        assert!(default.is_none());
 
         Some(TypeKind::Variant(Variant {
             ty,
@@ -393,8 +444,29 @@ impl Reader {
             default,
         }))
     }
+
+    fn parse_fixed_array(&mut self, extra: Option<&str>) -> Option<TypeKind> {
+        let parts = extra.unwrap().split_once('*').unwrap();
+
+        dbg!(parts);
+
+        Some(TypeKind::FixedArray(FixedArray {
+            count: parts.0.trim().parse().unwrap(),
+            value_type: parts.1.trim().into(),
+        }))
+    }
+
+    fn parse_dyn_array(&mut self, extra: Option<&str>) -> Option<TypeKind> {
+        let parts = extra.unwrap().split_once('*').unwrap();
+
+        Some(TypeKind::DynamicArray(DynamicArray {
+            size_type: parts.0.trim().into(),
+            value_type: parts.1.trim().into(),
+        }))
+    }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum MemberType {
     Normal,
     Default,
@@ -444,4 +516,163 @@ fn demand_string<'a>(iter: &mut impl Iterator<Item = (Position, &'a str)>, text:
 
 fn demand_done<'a>(mut iter: impl Iterator<Item = (Position, &'a str)>) {
     assert!(matches!(iter.next(), None));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    fn struct_sig(members: &[StructMember]) -> Vec<(&str, &str)> {
+        members
+            .iter()
+            .map(|m| (m.name.as_str(), m.ty.as_str()))
+            .collect()
+    }
+
+    fn enum_sig(members: &[EnumMember]) -> Vec<(&str, i64)> {
+        members.iter().map(|m| (m.name.as_str(), m.value)).collect()
+    }
+
+    fn bit_sig(members: &[BitfldMember]) -> Vec<(&str, &str, &str)> {
+        members
+            .iter()
+            .map(|m| (m.range.as_str(), m.name.as_str(), m.ty.as_str()))
+            .collect()
+    }
+
+    fn variant_sig(members: &[VariantMember]) -> Vec<(u64, &str)> {
+        members.iter().map(|m| (m.value, m.ty.as_str())).collect()
+    }
+
+    #[test]
+    fn intermediate() {
+        let source = include_str!("../assets/basic.jaw");
+
+        let m = Module::from_stream("file".into(), source.into()).unwrap();
+
+        let m: HashMap<_, _> = m
+            .definitions
+            .into_iter()
+            .map(|x| (x.ident.clone(), x))
+            .collect();
+
+        assert_eq!(m.len(), 11);
+
+        match &m["MyPOD"].kind {
+            TypeKind::Pack(pack) => {
+                assert_eq!(
+                    struct_sig(&pack.members),
+                    vec![("a_thing", "u8"), ("b_thing", "u64")]
+                );
+            }
+            other => panic!("MyPOD parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["MyOtherPOD"].kind {
+            TypeKind::Pack(pack) => {
+                assert_eq!(
+                    struct_sig(&pack.members),
+                    vec![("first", "MyPOD"), ("second", "FixedString")]
+                );
+            }
+            other => panic!("MyOtherPOD parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["PlainEnum"].kind {
+            TypeKind::Enum(e) => {
+                assert_eq!(e.ty, "u8");
+                assert!(e.default.is_none());
+                assert_eq!(enum_sig(&e.members), vec![("F1", 0), ("F2", 1)]);
+            }
+            other => panic!("PlainEnum parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["BetterEnum"].kind {
+            TypeKind::Enum(e) => {
+                assert_eq!(e.ty, "u8");
+                assert_eq!(
+                    e.default.as_ref().map(|d| (d.name.as_str(), d.value)),
+                    Some(("DEFAULT", 255))
+                );
+                assert_eq!(enum_sig(&e.members), vec![("A", 0), ("B", 1)]);
+            }
+            other => panic!("BetterEnum parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["MyFlags"].kind {
+            TypeKind::Bitfld(bits) => {
+                assert_eq!(bits.ty.as_str(), "u8");
+                assert_eq!(
+                    bit_sig(&bits.members),
+                    vec![
+                        ("0", "is_thing", "u8"),
+                        ("1-2", "another_thing", "u8"),
+                        ("3-4", "some_stuff", "PlainEnum")
+                    ]
+                );
+            }
+            other => panic!("MyFlags parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["SmallSeq"].kind {
+            TypeKind::Sequence(seq) => {
+                assert_eq!(struct_sig(&seq.members), vec![("list", "Data")]);
+            }
+            other => panic!("SmallSeq parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["Root"].kind {
+            TypeKind::Sequence(seq) => {
+                assert_eq!(
+                    struct_sig(&seq.members),
+                    vec![("name", "ShortString"), ("var", "MyVariant")]
+                );
+            }
+            other => panic!("Root parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["FixedString"].kind {
+            TypeKind::FixedArray(arr) => {
+                assert_eq!(arr.count, 4);
+                assert_eq!(arr.value_type.as_str(), "u8");
+            }
+            other => panic!("FixedString parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["ShortString"].kind {
+            TypeKind::DynamicArray(arr) => {
+                assert_eq!(arr.size_type.as_str(), "u8");
+                assert_eq!(arr.value_type.as_str(), "u8");
+            }
+            other => panic!("ShortString parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["Data"].kind {
+            TypeKind::DynamicArray(arr) => {
+                assert_eq!(arr.size_type.as_str(), "u8");
+                assert_eq!(arr.value_type.as_str(), "f32");
+            }
+            other => panic!("Data parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m["MyVariant"].kind {
+            TypeKind::Variant(var) => {
+                assert_eq!(var.ty.as_str(), "u8");
+                assert_eq!(
+                    variant_sig(&var.members),
+                    vec![(0, "MyPOD"), (1, "MyOtherPOD"), (2, "void")]
+                );
+                assert_eq!(
+                    var.default
+                        .as_ref()
+                        .map(|d| (d.value, d.ty.as_str()))
+                        .expect("variant default"),
+                    (3, "SmallSeq")
+                );
+            }
+            other => panic!("MyVariant parsed as unexpected kind: {:?}", other),
+        }
+    }
 }

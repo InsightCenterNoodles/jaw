@@ -10,8 +10,8 @@
 //! common types for embedding.
 
 mod codegen;
+mod intermediate;
 mod module;
-mod reader;
 mod tokenreader;
 mod tokens;
 
