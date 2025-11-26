@@ -1,12 +1,12 @@
 use std::{collections::HashMap, io::BufRead, iter::Peekable, ops::RangeInclusive};
 use thiserror::Error;
 
-use crate::intermediate::{Module, Position};
+use crate::intermediate::{self, DefinedAt, EnumMember, Module, Position, TypeName};
 
 #[derive(Debug)]
 pub struct StructMember {
     pub name: String,
-    pub ty: AType,
+    pub ty: TypeID,
     pub defined_at: DefinedAt,
 }
 
@@ -16,17 +16,10 @@ pub struct Pack {
     pub members: Vec<StructMember>,
 }
 
-#[derive(Debug)]
-pub struct EnumMember {
-    pub name: String,
-    pub value: i64,
-    pub defined_at: DefinedAt,
-}
-
 /// Enum with an explicit primitive underlying type.
 #[derive(Debug)]
 pub struct Enum {
-    pub underlying: AType,
+    pub underlying: TypeID,
     pub members: Vec<EnumMember>,
     pub default: Option<EnumMember>,
 }
@@ -34,7 +27,7 @@ pub struct Enum {
 #[derive(Debug)]
 pub struct BitfldMember {
     pub name: String,
-    pub underlying: AType,
+    pub underlying: TypeID,
     pub range: RangeInclusive<u32>,
     pub defined_at: DefinedAt,
 }
@@ -42,13 +35,13 @@ pub struct BitfldMember {
 /// Bitfield backed by an integer/enum type with named bit ranges.
 #[derive(Debug)]
 pub struct Bitfld {
-    pub underlying: AType,
+    pub underlying: TypeID,
     pub members: Vec<BitfldMember>,
 }
 
 #[derive(Debug)]
 pub struct VariantMember {
-    pub ty: AType,
+    pub ty: TypeID,
     pub value: u64,
     pub defined_at: Position,
 }
@@ -56,7 +49,7 @@ pub struct VariantMember {
 /// Tagged union where the discriminant has a primitive integer type.
 #[derive(Debug)]
 pub struct Variant {
-    pub discriminant: AType,
+    pub discriminant: TypeID,
     pub members: Vec<VariantMember>,
     pub default: Option<VariantMember>,
 }
@@ -69,7 +62,7 @@ pub struct Sequence {
 
 #[derive(Debug)]
 pub struct Alias {
-    pub other: AType,
+    pub other: TypeID,
 }
 
 /// Array kinds
@@ -104,17 +97,10 @@ pub struct Type {
     pub kind: TypeKind,
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct TypeName(std::rc::Rc<String>);
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct TypeID(u32);
 
-#[derive(Debug)]
-pub struct DefinedAt {
-    module: std::rc::Rc<CompiledModuleInfo>,
-    position: Position,
-}
 
 #[derive(Debug)]
 pub struct CompiledModuleInfo {
@@ -142,10 +128,61 @@ impl TypeIDAllocator {
 
 
 struct CompileState {
+    current_module: std::rc::Rc<CompiledModuleInfo>,
     name_to_id: HashMap<TypeName, TypeID>
 }
 
-pub fn convert(name_to_id: )
+impl CompileState {
+    fn lookup(&self, tname: &intermediate::TypeName) -> TypeID {
+        *self.name_to_id.get(tname).unwrap()
+    }
+}
+
+fn string_to_range(range: String) -> RangeInclusive<u32> {
+todo!()
+}
+
+pub fn convert(state: &mut CompileState,  ty: intermediate::Type) -> Type {
+    let new_kind = match ty.kind {
+        intermediate::TypeKind::Alias(alias) => TypeKind::Alias(
+                Alias { 
+                    other: state.lookup(&alias.other) 
+                }
+            ) ,
+        intermediate::TypeKind::Pack(pack) => TypeKind::Pack(Pack { 
+            members: pack.members.into_iter().map(|x| {
+                StructMember {
+                    name: x.name,
+                    ty: state.lookup(&x.ty),
+                    defined_at: x.defined_at,
+                }
+                
+            }).collect() 
+        }),
+        intermediate::TypeKind::Enum(enm) => TypeKind::Enum(Enum { 
+            underlying: state.lookup(&enm.ty), 
+            members: enm.members, 
+            default: enm.default 
+        }),
+        intermediate::TypeKind::Bitfld(bitfld) => TypeKind::Bitfld(Bitfld { 
+            underlying: state.lookup(&bitfld.ty), 
+            members: bitfld.members.into_iter().map(|x| {
+                BitfldMember {
+                    name: x.name,
+                    underlying: state.lookup(&x.ty),
+                    range: string_to_range(x.range),
+                    defined_at: x.defined_at,
+                }
+            }).collect()
+        }),
+        intermediate::TypeKind::Variant(variant) => todo!(),
+        intermediate::TypeKind::Sequence(sequence) => todo!(),
+        intermediate::TypeKind::DynamicArray(dynamic_array) => todo!(),
+        intermediate::TypeKind::FixedArray(fixed_array) => todo!(),
+    }
+
+    Type { ident: ty.ident, defined_at: ty.defined_at, kind: new_kind }
+}
 
 pub fn compile(module: Module) -> World {
     let shared_info = std::rc::Rc::new(CompiledModuleInfo {
