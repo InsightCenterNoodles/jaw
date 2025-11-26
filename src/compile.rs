@@ -1,11 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    io::BufRead,
-    iter::Peekable,
-    ops::RangeInclusive,
-    rc::{Rc, Weak},
-};
+use std::{collections::HashMap, io::BufRead, iter::Peekable, ops::RangeInclusive};
 use thiserror::Error;
 
 use crate::intermediate::{Module, Position};
@@ -111,39 +104,94 @@ pub struct Type {
     pub kind: TypeKind,
 }
 
-type AType = Rc<RefCell<Type>>;
-
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct TypeName(Rc<String>);
+pub struct TypeName(std::rc::Rc<String>);
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub struct TypeID(u32);
 
 #[derive(Debug)]
 pub struct DefinedAt {
-    module: Weak<RefCell<CompiledModule>>,
+    module: std::rc::Rc<CompiledModuleInfo>,
     position: Position,
 }
 
-pub struct CompiledModule {
+#[derive(Debug)]
+pub struct CompiledModuleInfo {
     source_code: String,
-
-    definitions: HashMap<TypeName, AType>,
 }
 
-pub fn compile(module: Module) -> CompiledModule {
-    let definitions = HashMap::<TypeName, AType>::new();
-    for item in module.definitions {
-        // allocate a type
+pub struct World {
+    definitions: HashMap<TypeID, Type>,
+}
 
-        let typename = TypeName(Rc::new(item.ident.clone()));
+struct TypeIDAllocator {
+    last: u32,
+}
 
-        definitions.insert(
-            typename.clone(),
-            Type {
-                ident: todo!(),
-                defined_at: todo!(),
-                kind: todo!(),
-            },
-        )
+impl TypeIDAllocator {
+    fn new() -> Self {
+        Self { last: 0 }
     }
+    fn next(&mut self) -> TypeID {
+        let r = TypeID(self.last);
+        self.last += 1;
+        r
+    }
+}
 
-    todo!()
+
+struct CompileState {
+    name_to_id: HashMap<TypeName, TypeID>
+}
+
+pub fn convert(name_to_id: )
+
+pub fn compile(module: Module) -> World {
+    let shared_info = std::rc::Rc::new(CompiledModuleInfo {
+        source_code: module.source,
+    });
+
+    let mut allocator = TypeIDAllocator::new();
+
+    let name_to_id: HashMap<TypeName, TypeID> = module
+        .definitions
+        .iter()
+        .map(|x| {
+            let ident = allocator.next();
+
+            let name = TypeName(std::rc::Rc::new(x.ident.clone()));
+            (name, ident)
+        })
+        .collect();
+
+    let defs: HashMap<_, _> = module
+        .definitions
+        .iter()
+        .map(|item| {
+
+            
+            // what is our id?
+            let this_id 
+
+            let ident = allocator.next();
+
+            let name = TypeName(std::rc::Rc::new(item.ident.clone()));
+
+            let cell = Type {
+                ident: name,
+                defined_at: DefinedAt {
+                    module: shared_info.clone(),
+                    position: item.defined_at,
+                },
+                kind: TypeKind::Undefined,
+            };
+
+            (item.ident, (item, cell))
+        })
+        .collect();
+
+    for def in defs {}
+
+    ret
 }
