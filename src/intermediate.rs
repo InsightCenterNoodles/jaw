@@ -1,63 +1,110 @@
-use std::{io::BufRead, iter::Peekable, rc::Rc};
+use std::{fmt::Display, io::BufRead, iter::Peekable};
 use thiserror::Error;
+
+#[derive(Debug, Clone)]
+pub struct SourceCode(pub std::sync::Arc<String>);
+
+impl SourceCode {
+    pub fn location(&self, line: usize, column: usize) -> SourceLocation {
+        SourceLocation {
+            source: self.clone(),
+            position: Position { line, column },
+        }
+    }
+
+    pub fn position(&self, position: Position) -> SourceLocation {
+        SourceLocation {
+            source: self.clone(),
+            position,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct DefinedAt {
-    source: std::rc::Rc<String>,
+pub struct SourceLocation {
+    source: SourceCode,
     position: Position,
 }
 
-impl DefinedAt {
-    pub fn new(source: std::rc::Rc<String>, position: Position) -> Self {
+impl SourceLocation {
+    pub fn new(source: SourceCode, position: Position) -> Self {
         Self { source, position }
+    }
+}
+
+impl Display for SourceLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(line) = self.source.0.lines().nth(self.position.line) {
+            if let Some((a, b)) = line.split_at_checked(self.position.column) {
+                return write!(f, "line {}: {}↪{}", self.position.line, a, b);
+            }
+        }
+
+        write!(f, "unknown location")
     }
 }
 
 #[derive(Debug, Error)]
 pub enum IntermediateError {
-    #[error("unsupported declaration type `{decl_type}` at line {line}")]
-    UnsupportedDeclaration { line: usize, decl_type: String },
-    #[error("{kind} declaration requires additional detail at line {line}")]
-    MissingDeclarationDetail { line: usize, kind: &'static str },
-    #[error("malformed member at {position:?}: {reason}")]
-    MalformedMember { position: Position, reason: String },
-    #[error("invalid number `{value}` at {position:?}: {source}")]
+    #[error("unsupported declaration type `{decl_type}` at {line}")]
+    UnsupportedDeclaration {
+        line: SourceLocation,
+        decl_type: String,
+    },
+    #[error("{kind} declaration requires additional detail at {line}")]
+    MissingDeclarationDetail {
+        line: SourceLocation,
+        kind: &'static str,
+    },
+    #[error("malformed member at {position}: {reason}")]
+    MalformedMember {
+        position: SourceLocation,
+        reason: String,
+    },
+    #[error("invalid number `{value}` at {position}: {source}")]
     InvalidNumber {
-        position: Position,
+        position: SourceLocation,
         value: String,
         #[source]
         source: std::num::ParseIntError,
     },
     #[error("duplicate default member at line {line}")]
-    DuplicateDefault { line: usize },
+    DuplicateDefault { line: SourceLocation },
     #[error("invalid array specification at line {line}")]
-    InvalidArraySpec { line: usize },
+    InvalidArraySpec { line: SourceLocation },
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct TypeName(std::rc::Rc<String>);
+pub struct TypeName(std::sync::Arc<String>);
 
 impl TypeName {
+    #[allow(unused)]
     fn as_str(&self) -> &str {
         &self.0
     }
 }
 
+impl Display for TypeName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl From<&str> for TypeName {
     fn from(value: &str) -> Self {
-        Self(std::rc::Rc::new(value.trim().into()))
+        Self(std::sync::Arc::new(value.trim().into()))
     }
 }
 
 impl From<String> for TypeName {
     fn from(value: String) -> Self {
-        Self(std::rc::Rc::new(value.trim().into()))
+        Self(std::sync::Arc::new(value.trim().into()))
     }
 }
 
@@ -65,12 +112,12 @@ impl From<String> for TypeName {
 pub struct StructMember {
     pub name: String,
     pub ty: TypeName,
-    pub defined_at: DefinedAt,
+    pub defined_at: SourceLocation,
 }
 
 impl StructMember {
     fn parse(
-        source: Rc<String>,
+        source: SourceCode,
         input: (usize, String),
     ) -> Result<(MemberType, Self), IntermediateError> {
         let mut iter = make_mem_split(&input);
@@ -78,36 +125,36 @@ impl StructMember {
             line: input.0,
             column: 0,
         };
-        let mem_ty = consume_member_start(&mut iter, fallback)?;
+        let mem_ty = consume_member_start(source.clone(), &mut iter, fallback)?;
 
         let (place, name) = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: fallback,
+                position: source.position(fallback),
                 reason: "missing member name".into(),
             })?;
 
-        dbg!(place, name);
+        //dbg!(place, name);
 
-        demand_string(&mut iter, ":", place)?;
+        demand_string(source.clone(), &mut iter, ":", place)?;
 
         let ty = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: place,
+                position: source.position(place),
                 reason: "missing member type".into(),
             })?
             .1
             .to_string();
 
-        demand_done(iter)?;
+        demand_done(source.clone(), iter)?;
 
         Ok((
             mem_ty,
             Self {
                 name: name.into(),
                 ty: ty.into(),
-                defined_at: DefinedAt::new(source, place),
+                defined_at: SourceLocation::new(source, place),
             },
         ))
     }
@@ -123,12 +170,12 @@ pub struct Pack {
 pub struct EnumMember {
     pub name: String,
     pub value: i64,
-    pub defined_at: DefinedAt,
+    pub defined_at: SourceLocation,
 }
 
 impl EnumMember {
     fn parse(
-        source: Rc<String>,
+        source: SourceCode,
         input: (usize, String),
     ) -> Result<(MemberType, Self), IntermediateError> {
         let mut iter = make_mem_split(&input);
@@ -136,42 +183,42 @@ impl EnumMember {
             line: input.0,
             column: 0,
         };
-        let mem_ty = consume_member_start(&mut iter, fallback)?;
+        let mem_ty = consume_member_start(source.clone(), &mut iter, fallback)?;
 
-        dbg!(mem_ty);
+        //dbg!(mem_ty);
 
         let (place, name) = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: fallback,
+                position: source.position(fallback),
                 reason: "missing enum member name".into(),
             })?;
 
-        demand_string(&mut iter, "=", place)?;
+        demand_string(source.clone(), &mut iter, "=", place)?;
 
         let (value_position, value_raw) =
             iter.next()
                 .ok_or_else(|| IntermediateError::MalformedMember {
-                    position: place,
+                    position: source.position(place),
                     reason: "missing enum member value".into(),
                 })?;
 
         let value = value_raw
             .parse()
-            .map_err(|source| IntermediateError::InvalidNumber {
-                position: value_position,
+            .map_err(|s| IntermediateError::InvalidNumber {
+                position: source.position(value_position),
                 value: value_raw.to_string(),
-                source,
+                source: s,
             })?;
 
-        demand_done(iter)?;
+        demand_done(source.clone(), iter)?;
 
         Ok((
             mem_ty,
             Self {
                 name: name.into(),
                 value,
-                defined_at: DefinedAt::new(source, place),
+                defined_at: SourceLocation::new(source, place),
             },
         ))
     }
@@ -190,12 +237,12 @@ pub struct BitfldMember {
     pub name: String,
     pub ty: TypeName,
     pub range: String,
-    pub defined_at: DefinedAt,
+    pub defined_at: SourceLocation,
 }
 
 impl BitfldMember {
     fn parse(
-        source: Rc<String>,
+        source: SourceCode,
         input: (usize, String),
     ) -> Result<(MemberType, Self), IntermediateError> {
         let mut iter = make_mem_split(&input);
@@ -203,12 +250,12 @@ impl BitfldMember {
             line: input.0,
             column: 0,
         };
-        let mem_ty = consume_member_start(&mut iter, fallback)?;
+        let mem_ty = consume_member_start(source.clone(), &mut iter, fallback)?;
 
         let range = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: fallback,
+                position: source.position(fallback),
                 reason: "missing bitfield range".into(),
             })?
             .1
@@ -217,22 +264,22 @@ impl BitfldMember {
         let (place, name) = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: fallback,
+                position: source.position(fallback),
                 reason: "missing bitfield member name".into(),
             })?;
 
-        demand_string(&mut iter, ":", place)?;
+        demand_string(source.clone(), &mut iter, ":", place)?;
 
         let ty = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: place,
+                position: source.position(place),
                 reason: "missing bitfield member type".into(),
             })?
             .1
             .into();
 
-        demand_done(iter)?;
+        demand_done(source.clone(), iter)?;
 
         Ok((
             mem_ty,
@@ -240,7 +287,7 @@ impl BitfldMember {
                 name: name.into(),
                 ty,
                 range,
-                defined_at: DefinedAt::new(source, place),
+                defined_at: SourceLocation::new(source, place),
             },
         ))
     }
@@ -257,12 +304,12 @@ pub struct Bitfld {
 pub struct VariantMember {
     pub ty: TypeName,
     pub value: u64,
-    pub defined_at: DefinedAt,
+    pub defined_at: SourceLocation,
 }
 
 impl VariantMember {
     fn parse(
-        source: Rc<String>,
+        source: SourceCode,
         input: (usize, String),
     ) -> Result<(MemberType, Self), IntermediateError> {
         let mut iter = make_mem_split(&input);
@@ -270,39 +317,39 @@ impl VariantMember {
             line: input.0,
             column: 0,
         };
-        let mem_ty = consume_member_start(&mut iter, fallback)?;
+        let mem_ty = consume_member_start(source.clone(), &mut iter, fallback)?;
 
         let (value_position, raw_value) =
             iter.next()
                 .ok_or_else(|| IntermediateError::MalformedMember {
-                    position: fallback,
+                    position: source.position(fallback),
                     reason: "missing variant discriminant".into(),
                 })?;
         let value = raw_value
             .parse()
-            .map_err(|source| IntermediateError::InvalidNumber {
-                position: value_position,
+            .map_err(|s| IntermediateError::InvalidNumber {
+                position: source.position(value_position),
                 value: raw_value.to_string(),
-                source,
+                source: s,
             })?;
 
-        demand_string(&mut iter, "=>", value_position)?;
+        demand_string(source.clone(), &mut iter, "=>", value_position)?;
 
         let (place, ty) = iter
             .next()
             .ok_or_else(|| IntermediateError::MalformedMember {
-                position: value_position,
+                position: source.position(value_position),
                 reason: "missing variant type".into(),
             })?;
 
-        demand_done(iter)?;
+        demand_done(source.clone(), iter)?;
 
         Ok((
             mem_ty,
             Self {
                 ty: ty.into(),
                 value,
-                defined_at: DefinedAt::new(source, place),
+                defined_at: SourceLocation::new(source, place),
             },
         ))
     }
@@ -317,29 +364,29 @@ pub struct Variant {
 }
 
 trait HasDefinedAt {
-    fn defined_at(&self) -> DefinedAt;
+    fn defined_at(&self) -> SourceLocation;
 }
 
 impl HasDefinedAt for StructMember {
-    fn defined_at(&self) -> DefinedAt {
+    fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for EnumMember {
-    fn defined_at(&self) -> DefinedAt {
+    fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for BitfldMember {
-    fn defined_at(&self) -> DefinedAt {
+    fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for VariantMember {
-    fn defined_at(&self) -> DefinedAt {
+    fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
@@ -383,7 +430,7 @@ pub enum TypeKind {
 #[derive(Debug)]
 pub struct Type {
     pub ident: TypeName,
-    pub defined_at: DefinedAt,
+    pub defined_at: SourceLocation,
     pub kind: TypeKind,
 }
 
@@ -396,14 +443,14 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn from_stream(name: String, source: String) -> Result<Self, IntermediateError> {
+    pub fn from_string(name: String, source: String) -> Result<Self, IntermediateError> {
         // TODO remove all these clones
         let mut reader = Reader::new(source.clone());
 
         let mut definitions = vec![];
 
         while let Some(line) = reader.next_line() {
-            dbg!(&line);
+            //dbg!(&line);
 
             // parse header
             let mut parts = line.1.split_whitespace();
@@ -420,13 +467,24 @@ impl Module {
 
             let extra = line.1.split_once(':').map(|x| x.1.trim());
 
-            dbg!(extra);
+            //dbg!(extra);
 
             let line_number = line.0;
 
             match decl_type {
+                "alias" => definitions.push(Type {
+                    defined_at: SourceLocation::new(
+                        reader.code.clone(),
+                        Position {
+                            line: line_number,
+                            column: 0,
+                        },
+                    ),
+                    kind: reader.parse_alias(extra, line_number)?,
+                    ident: decl_name,
+                }),
                 "pack" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -437,7 +495,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "seq" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -448,7 +506,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "enum" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -459,7 +517,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "bits" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -470,7 +528,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "variant" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -481,7 +539,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "fixed_array" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -492,7 +550,7 @@ impl Module {
                     ident: decl_name,
                 }),
                 "dyn_array" => definitions.push(Type {
-                    defined_at: DefinedAt::new(
+                    defined_at: SourceLocation::new(
                         reader.code.clone(),
                         Position {
                             line: line_number,
@@ -504,7 +562,7 @@ impl Module {
                 }),
                 _ => {
                     return Err(IntermediateError::UnsupportedDeclaration {
-                        line: line_number,
+                        line: reader.code.location(line_number, 0),
                         decl_type: decl_type.to_owned(),
                     });
                 }
@@ -520,7 +578,7 @@ impl Module {
 }
 
 struct Reader {
-    code: Rc<String>,
+    code: SourceCode,
     source:
         Peekable<std::iter::Enumerate<std::io::Lines<std::io::BufReader<std::io::Cursor<String>>>>>,
 }
@@ -528,7 +586,7 @@ struct Reader {
 impl Reader {
     fn new(s: String) -> Self {
         Self {
-            code: Rc::new(s.clone()),
+            code: SourceCode(std::sync::Arc::new(s.clone())),
             source: std::io::BufReader::new(std::io::Cursor::new(s))
                 .lines()
                 .enumerate()
@@ -565,7 +623,7 @@ impl Reader {
         mut f: Func,
     ) -> Result<(Vec<U>, Option<U>), IntermediateError>
     where
-        Func: FnMut(Rc<String>, (usize, String)) -> Result<(MemberType, U), IntermediateError>,
+        Func: FnMut(SourceCode, (usize, String)) -> Result<(MemberType, U), IntermediateError>,
         U: HasDefinedAt,
     {
         let mut ret = vec![];
@@ -584,7 +642,7 @@ impl Reader {
                 MemberType::Default => {
                     if def.is_some() {
                         return Err(IntermediateError::DuplicateDefault {
-                            line: parsed.defined_at().position.line,
+                            line: parsed.defined_at().clone(),
                         });
                     }
                     def = Some(parsed);
@@ -606,6 +664,23 @@ impl Reader {
         }
     }
 
+    fn parse_alias(
+        &mut self,
+        extra: Option<&str>,
+        line: usize,
+    ) -> Result<TypeKind, IntermediateError> {
+        let Some(extra) = extra else {
+            return Err(IntermediateError::MissingDeclarationDetail {
+                line: self.code.location(line, 0),
+                kind: "Aliass",
+            });
+        };
+
+        Ok(TypeKind::Alias(Alias {
+            other: extra.trim().into(),
+        }))
+    }
+
     fn parse_pack(
         &mut self,
         _extra: Option<&str>,
@@ -613,11 +688,11 @@ impl Reader {
     ) -> Result<TypeKind, IntermediateError> {
         let (members, default) = self.member_iter(StructMember::parse)?;
 
-        dbg!(&members);
+        //dbg!(&members);
 
         if let Some(member) = default {
             return Err(IntermediateError::MalformedMember {
-                position: member.defined_at().position,
+                position: member.defined_at().clone(),
                 reason: "pack declarations do not support default members".into(),
             });
         }
@@ -634,7 +709,7 @@ impl Reader {
 
         if let Some(member) = default {
             return Err(IntermediateError::MalformedMember {
-                position: member.defined_at().position,
+                position: member.defined_at().clone(),
                 reason: "sequence declarations do not support default members".into(),
             });
         }
@@ -648,7 +723,10 @@ impl Reader {
         line: usize,
     ) -> Result<TypeKind, IntermediateError> {
         let ty = extra
-            .ok_or(IntermediateError::MissingDeclarationDetail { line, kind: "enum" })?
+            .ok_or(IntermediateError::MissingDeclarationDetail {
+                line: self.code.location(line, 0),
+                kind: "enum",
+            })?
             .into();
 
         let (members, default) = self.member_iter(EnumMember::parse)?;
@@ -666,14 +744,17 @@ impl Reader {
         line: usize,
     ) -> Result<TypeKind, IntermediateError> {
         let ty = extra
-            .ok_or(IntermediateError::MissingDeclarationDetail { line, kind: "bits" })?
+            .ok_or(IntermediateError::MissingDeclarationDetail {
+                line: self.code.location(line, 0),
+                kind: "bits",
+            })?
             .into();
 
         let (members, default) = self.member_iter(BitfldMember::parse)?;
 
         if let Some(member) = default {
             return Err(IntermediateError::MalformedMember {
-                position: member.defined_at().position,
+                position: member.defined_at().clone(),
                 reason: "bitfield declarations do not support default members".into(),
             });
         }
@@ -688,7 +769,7 @@ impl Reader {
     ) -> Result<TypeKind, IntermediateError> {
         let ty = extra
             .ok_or(IntermediateError::MissingDeclarationDetail {
-                line,
+                line: self.code.location(line, 0),
                 kind: "variant",
             })?
             .into();
@@ -708,20 +789,22 @@ impl Reader {
         line: usize,
     ) -> Result<TypeKind, IntermediateError> {
         let spec = extra.ok_or(IntermediateError::MissingDeclarationDetail {
-            line,
+            line: self.code.location(line, 0),
             kind: "fixed_array",
         })?;
         let parts = spec
             .split_once('*')
-            .ok_or(IntermediateError::InvalidArraySpec { line })?;
+            .ok_or(IntermediateError::InvalidArraySpec {
+                line: self.code.location(line, 0),
+            })?;
 
-        dbg!(parts);
+        //dbg!(parts);
 
         let count_str = parts.0.trim();
         let count = count_str
             .parse()
             .map_err(|source| IntermediateError::InvalidNumber {
-                position: Position { line, column: 0 },
+                position: self.code.location(line, 0),
                 value: count_str.to_string(),
                 source,
             })?;
@@ -738,12 +821,14 @@ impl Reader {
         line: usize,
     ) -> Result<TypeKind, IntermediateError> {
         let spec = extra.ok_or(IntermediateError::MissingDeclarationDetail {
-            line,
+            line: self.code.location(line, 0),
             kind: "dyn_array",
         })?;
         let parts = spec
             .split_once('*')
-            .ok_or(IntermediateError::InvalidArraySpec { line })?;
+            .ok_or(IntermediateError::InvalidArraySpec {
+                line: self.code.location(line, 0),
+            })?;
 
         Ok(TypeKind::DynamicArray(DynamicArray {
             size_type: parts.0.trim().into(),
@@ -780,6 +865,7 @@ fn make_mem_split(input: &(usize, String)) -> impl Iterator<Item = (Position, &s
 }
 
 fn consume_member_start<'a>(
+    code: SourceCode,
     iter: &mut impl Iterator<Item = (Position, &'a str)>,
     fallback: Position,
 ) -> Result<MemberType, IntermediateError> {
@@ -787,17 +873,18 @@ fn consume_member_start<'a>(
         Some((_, "-")) => Ok(MemberType::Normal),
         Some((_, ">")) => Ok(MemberType::Default),
         Some((position, other)) => Err(IntermediateError::MalformedMember {
-            position,
+            position: code.position(position),
             reason: format!("expected `-` or `>` but found `{other}`"),
         }),
         None => Err(IntermediateError::MalformedMember {
-            position: fallback,
+            position: code.position(fallback),
             reason: "missing member prefix".into(),
         }),
     }
 }
 
 fn demand_string<'a>(
+    code: SourceCode,
     iter: &mut impl Iterator<Item = (Position, &'a str)>,
     text: &str,
     fallback: Position,
@@ -805,22 +892,23 @@ fn demand_string<'a>(
     match iter.next() {
         Some((_, x)) if x == text => Ok(()),
         Some((position, other)) => Err(IntermediateError::MalformedMember {
-            position,
+            position: code.position(position),
             reason: format!("expected `{text}` but found `{other}`"),
         }),
         None => Err(IntermediateError::MalformedMember {
-            position: fallback,
+            position: code.position(fallback),
             reason: format!("expected `{text}`"),
         }),
     }
 }
 
 fn demand_done<'a>(
+    code: SourceCode,
     mut iter: impl Iterator<Item = (Position, &'a str)>,
 ) -> Result<(), IntermediateError> {
     if let Some((position, extra)) = iter.next() {
         Err(IntermediateError::MalformedMember {
-            position,
+            position: code.position(position),
             reason: format!("unexpected extra token `{extra}`"),
         })
     } else {
@@ -860,7 +948,7 @@ mod tests {
     fn intermediate() {
         let source = include_str!("../assets/basic.jaw");
 
-        let m = Module::from_stream("file".into(), source.into()).expect("parse module");
+        let m = Module::from_string("file".into(), source.into()).expect("parse module");
 
         let m: HashMap<_, _> = m
             .definitions
