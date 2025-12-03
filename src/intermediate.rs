@@ -360,7 +360,6 @@ impl VariantMember {
 pub struct Variant {
     pub ty: TypeName,
     pub members: Vec<VariantMember>,
-    pub default: Option<VariantMember>,
 }
 
 trait HasDefinedAt {
@@ -434,6 +433,7 @@ pub struct Type {
     pub kind: TypeKind,
 }
 
+#[derive(Debug)]
 pub struct Module {
     pub name: String,
 
@@ -776,11 +776,14 @@ impl Reader {
 
         let (members, default) = self.member_iter(VariantMember::parse)?;
 
-        Ok(TypeKind::Variant(Variant {
-            ty,
-            members,
-            default,
-        }))
+        if let Some(member) = default {
+            return Err(IntermediateError::MalformedMember {
+                position: member.defined_at().clone(),
+                reason: "variant declarations do not support default members".into(),
+            });
+        }
+
+        Ok(TypeKind::Variant(Variant { ty, members }))
     }
 
     fn parse_fixed_array(
@@ -946,7 +949,7 @@ mod tests {
 
     #[test]
     fn intermediate() {
-        let source = include_str!("../assets/basic.jaw");
+        let source = include_str!("../assets/example.jaw");
 
         let m = Module::from_string("file".into(), source.into()).expect("parse module");
 
@@ -956,7 +959,7 @@ mod tests {
             .map(|x| (x.ident.clone(), x))
             .collect();
 
-        assert_eq!(m.len(), 11);
+        assert_eq!(m.len(), 12);
 
         match &m[&"MyPOD".into()].kind {
             TypeKind::Pack(pack) => {
@@ -1060,17 +1063,33 @@ mod tests {
                 assert_eq!(var.ty.as_str(), "u8");
                 assert_eq!(
                     variant_sig(&var.members),
-                    vec![(0, "MyPOD"), (1, "MyOtherPOD"), (2, "void")]
-                );
-                assert_eq!(
-                    var.default
-                        .as_ref()
-                        .map(|d| (d.value, d.ty.as_str()))
-                        .expect("variant default"),
-                    (3, "SmallSeq")
+                    vec![
+                        (0, "MyPOD"),
+                        (1, "MyOtherPOD"),
+                        (2, "void"),
+                        (3, "SmallSeq")
+                    ]
                 );
             }
             other => panic!("MyVariant parsed as unexpected kind: {:?}", other),
         }
+    }
+
+    #[test]
+    fn variant_default_is_rejected() {
+        let source = r#"
+variant Bad : u8
+> 0 => void
+"#;
+
+        let err = Module::from_string("file".into(), source.into()).expect_err("parse should fail");
+
+        let IntermediateError::MalformedMember { reason, .. } = err else {
+            panic!("unexpected error kind: {err:?}");
+        };
+        assert!(
+            reason.contains("do not support default"),
+            "unexpected error: {reason}"
+        );
     }
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Ok;
 use clap::Parser;
+use jaw::codegen;
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
@@ -34,6 +35,8 @@ fn process() -> anyhow::Result<()> {
     let module = jaw::intermediate::Module::from_string(file_stem, source)?;
 
     let world = jaw::compile::compile(module)?;
+
+    codegen::emit_cpp(&world, "out.cpp")?;
 
     Ok(())
 }

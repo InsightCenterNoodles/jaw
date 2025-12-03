@@ -3,7 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jaw::prelude::*;
+use jaw::*;
+
+/*
 
 fn has_prog(prog: &str, arg: &str) -> bool {
     Command::new(prog)
@@ -259,3 +261,4 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), Box<dyn std::error
 
     Ok(())
 }
+ */

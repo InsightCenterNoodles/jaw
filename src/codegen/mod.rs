@@ -1,10 +1,17 @@
 mod cpp;
 
-use std::{fmt::Display, io::Write};
+use std::{fmt::Display, io::Write, path::Path};
+
+use crate::compile::World;
+use anyhow::Context;
+
+// MARK: Inner
 
 struct OutfileInner {
     out: std::io::BufWriter<std::fs::File>,
     indent: usize,
+    indent_char: &'static str,
+    dedent_char: &'static str,
 }
 
 impl Write for OutfileInner {
@@ -39,6 +46,8 @@ impl Drop for OutfileInner {
     }
 }
 
+// MARK: Outfile
+
 struct Outfile(OutfileInner);
 
 impl<T: Display> std::ops::AddAssign<T> for Outfile {
@@ -48,12 +57,33 @@ impl<T: Display> std::ops::AddAssign<T> for Outfile {
 }
 
 impl Outfile {
+    fn wln(&mut self, s: &str) {
+        self.0.wln(s);
+    }
+
+    #[allow(dead_code)]
+    fn wdisp<T: Display>(&mut self, s: &T) {
+        self.0.wdisp(s);
+    }
+
     fn indent<'a>(&'a mut self) -> Indenter<'a> {
+        self.wln(self.0.indent_char);
         self.0.indent += 1;
         Indenter(&mut self.0)
     }
 }
 
+impl Write for Outfile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+// MARK: Indenter
 struct Indenter<'a>(&'a mut OutfileInner);
 
 impl<'a, T: Display> std::ops::AddAssign<T> for Indenter<'a> {
@@ -65,26 +95,86 @@ impl<'a, T: Display> std::ops::AddAssign<T> for Indenter<'a> {
 impl<'a> Drop for Indenter<'a> {
     fn drop(&mut self) {
         self.0.indent -= 1;
+        self.wln(self.0.dedent_char);
     }
 }
 
 impl<'a> Indenter<'a> {
+    fn wln(&mut self, s: &str) {
+        self.0.wln(s);
+    }
+
+    #[allow(dead_code)]
+    fn wdisp<T: Display>(&mut self, s: &T) {
+        self.0.wdisp(s);
+    }
+
     fn indent<'b>(&'b mut self) -> Indenter<'b> {
+        self.wln(self.0.indent_char);
         self.0.indent += 1;
         Indenter(&mut self.0)
     }
 }
 
-fn thing(x: &mut Outfile) {
-    {
-        let mut indent = x.indent();
+impl<'a> Write for Indenter<'a> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
 
-        {
-            let mut indent2 = indent.indent();
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
 
-            indent2 += "this is a test";
-        }
+// MARK: Utils
 
-        indent += "another test";
+fn open_outfile(
+    path: &Path,
+    indent_char: &'static str,
+    dedent_char: &'static str,
+) -> anyhow::Result<Outfile> {
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("opening output file {}", path.display()))?;
+    Ok(Outfile(OutfileInner {
+        out: std::io::BufWriter::new(file),
+        indent: 0,
+        indent_char,
+        dedent_char,
+    }))
+}
+
+pub fn emit_cpp(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut out = open_outfile(path, "{", "}")?;
+    cpp::emit(world, &mut out)
+        .with_context(|| format!("while generating C++ into {}", path.display()))
+}
+
+trait Sink {
+    fn wln(&mut self, s: &str);
+    fn indent(&mut self) -> Indenter<'_>;
+
+    fn newline(&mut self) {
+        self.wln("");
+    }
+}
+
+impl Sink for Outfile {
+    fn wln(&mut self, s: &str) {
+        Outfile::wln(self, s);
+    }
+
+    fn indent(&mut self) -> Indenter<'_> {
+        Outfile::indent(self)
+    }
+}
+
+impl<'a> Sink for Indenter<'a> {
+    fn wln(&mut self, s: &str) {
+        Indenter::wln(self, s);
+    }
+
+    fn indent(&mut self) -> Indenter<'_> {
+        Indenter::indent(self)
     }
 }

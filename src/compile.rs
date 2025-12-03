@@ -59,7 +59,6 @@ pub struct VariantMember {
 pub struct Variant {
     pub discriminant: TypeID,
     pub members: Vec<VariantMember>,
-    pub default: Option<VariantMember>,
 }
 
 /// Sequence of named fields (a typical record/struct).
@@ -218,14 +217,26 @@ impl Type {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct TypeID(u32);
 
+#[derive(Debug)]
 pub struct World {
     definitions: HashMap<TypeID, Type>,
     sorted: Vec<TypeID>,
+    module_name: String,
 }
 
 impl World {
-    fn lookup(&self, tname: TypeID) -> &Type {
+    pub fn lookup(&self, tname: TypeID) -> &Type {
         self.definitions.get(&tname).unwrap()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (TypeID, &Type)> {
+        self.sorted
+            .iter()
+            .filter_map(|id| self.definitions.get(id).map(|ty| (*id, ty)))
+    }
+
+    pub fn module_name(&self) -> &str {
+        &self.module_name
     }
 }
 
@@ -314,7 +325,6 @@ fn convert(state: &CompileState, ty: intermediate::Type) -> (TypeID, Type) {
             TypeKind::Variant(Variant {
                 discriminant: state.lookup(&variant.ty),
                 members: variant.members.into_iter().map(convert_member).collect(),
-                default: variant.default.map(convert_member),
             })
         }
         intermediate::TypeKind::Sequence(sequence) => TypeKind::Sequence(Sequence {
@@ -525,6 +535,7 @@ fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()>
     .with_context(ctx)?;
 
     let width = underlying.bits();
+    let mut occupied: u128 = 0;
 
     for m in &value.members {
         verify_bitfield_member_type(world, m)
@@ -545,6 +556,17 @@ fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()>
                 m.name
             );
         }
+
+        let len = (end - start + 1) as u32;
+        let mask = ((1u128 << len) - 1) << start;
+        if occupied & mask != 0 {
+            bail!(
+                "bitfield member {} overlaps with previous members in {}",
+                m.name,
+                Typeref::from(ty)
+            );
+        }
+        occupied |= mask;
     }
 
     Ok(())
@@ -594,10 +616,6 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
         check_value(member.value, &member.defined_at).with_context(ctx)?;
     }
 
-    if let Some(default) = &value.default {
-        check_value(default.value, &default.defined_at).with_context(ctx)?;
-    }
-
     Ok(())
 }
 fn verify_sequence(world: &World, ty: &Type, value: &Sequence) -> anyhow::Result<()> {
@@ -615,6 +633,10 @@ fn verify_dynarray(world: &World, ty: &Type, value: &DynamicArray) -> anyhow::Re
     let ctx = || format!("while verifying dynarray {}", Typeref::from(ty));
 
     verify_is_int_of(world, value.size_type, Signedness::Unsigned).with_context(ctx)?;
+    let value_ty = world.lookup(value.value_type);
+    if matches!(value_ty.kind, TypeKind::Void) {
+        bail!("dynarray element type may not be void");
+    }
 
     Ok(())
 }
@@ -749,12 +771,20 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
         (name_to_id, defs)
     };
 
-    name_to_id.extend(module.definitions.iter().map(|x| {
-        let ident = allocator.next();
+    for def in module.definitions.iter() {
+        if let Some(existing) = name_to_id.get(&def.ident) {
+            let prev = defs.get(existing).expect("type id without definition");
+            bail!(
+                "duplicate type name {} defined at {} (previously defined at {})",
+                def.ident,
+                def.defined_at,
+                prev.defined_at
+            );
+        }
 
-        let name = x.ident.clone();
-        (name, ident)
-    }));
+        let ident = allocator.next();
+        name_to_id.insert(def.ident.clone(), ident);
+    }
 
     let cs = CompileState { name_to_id };
 
@@ -770,6 +800,7 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
     verify(World {
         definitions: defs,
         sorted,
+        module_name: module.name,
     })
 }
 
@@ -785,12 +816,9 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
             deps
         }
         TypeKind::Variant(variant) => {
-            let mut deps: Vec<TypeID> = Vec::with_capacity(variant.members.len() + 2);
+            let mut deps: Vec<TypeID> = Vec::with_capacity(variant.members.len() + 1);
             deps.push(variant.discriminant);
             deps.extend(variant.members.iter().map(|m| m.ty));
-            if let Some(default) = &variant.default {
-                deps.push(default.ty);
-            }
             deps
         }
         TypeKind::Sequence(sequence) => sequence.members.iter().map(|m| m.ty).collect(),
@@ -854,4 +882,39 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> Vec<TypeID> {
     }
 
     order
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intermediate;
+
+    #[test]
+    fn bitfield_overlap_is_rejected() {
+        let src = r#"
+bits Bad : u8
+- 0-2 a : u8
+- 2-3 b : u8
+"#;
+
+        let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+        let err = compile(module).expect_err("compile should reject overlapping bit ranges");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("overlaps") || msg.contains("overlap"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn dynarray_void_element_is_rejected() {
+        let src = r#"
+dyn_array Bad : u8 * void
+"#;
+
+        let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+        let err = compile(module).expect_err("compile should reject void element type");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("void"), "unexpected error message: {msg}");
+    }
 }
