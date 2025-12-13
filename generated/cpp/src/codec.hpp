@@ -1,21 +1,15 @@
 #pragma once
 
+#include <algorithm>
 #include <span>
 #include <vector>
 
 struct VecWriter {
     std::vector<std::byte>& dest;
 
-    bool append(std::span<const std::byte> v) {
-        dest.insert(dest.end(), v.begin(), v.end());
+    bool write_bytes(std::byte const* v, size_t count) {
+        dest.insert(dest.end(), v, v + count);
         return true;
-    }
-
-    template <class T>
-    bool write_raw(T const& t) {
-        static_assert(std::is_trivial_v<T>);
-
-        return append(std::as_bytes(std::span(&t, 1)));
     }
 };
 
@@ -23,28 +17,22 @@ struct VecWriter {
 struct VecReader {
     std::span<std::byte const> src;
 
-    bool read_to(std::span<std::byte> v) {
+    bool read_bytes(std::byte* p, size_t count) {
+        if (count > src.size()) { return false; }
 
-        if (v.size() > src.size()) { return false; }
+        std::copy_n(src.begin(), count, p);
 
-        std::copy_n(src.begin(), v.size(), v.begin());
-
-        src = src.subspan(v.size());
+        src = src.subspan(count);
 
         return true;
     }
+    std::span<const std::byte> advance_bytes(size_t count) {
+        if (count > src.size()) { return {}; }
 
-    template <class T>
-    bool read_raw(T& t) {
-        static_assert(std::is_trivial_v<T>);
+        auto ret = src.first(count);
 
-        return read_to(std::as_writable_bytes(std::span(&t, 1)));
-    }
+        src = src.subspan(count);
 
-    bool borrow_bytes(size_t n, std::span<const std::byte>& out) {
-        if (n > src.size()) { return false; }
-        out = src.first(n);
-        src = src.subspan(n);
-        return true;
+        return ret;
     }
 };

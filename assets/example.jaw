@@ -1,9 +1,19 @@
 # Global namespace only; case-sensitive; no name collisions allowed.
 
+# ==== Builtin Types
+
 # Primitives. All scalars are little endian:
 # u8, u16, u32, u64
 # i8, i16, i32, i64
 # f32, f64
+
+# Marker for nothing. This is useful for variants.
+# void
+
+# For opaque bytes and strings, use u8. These should be presented to readers as views
+
+
+# ==== Example
 
 # A pack is Plain Old Data and maps to a packed C struct (e.g., __attribute__((packed)) / #pragma pack(1)).
 # No padding is inserted; 1-byte alignment; intended to be read/written in a single operation; contents must be POD.
@@ -55,10 +65,10 @@ seq SmallSeq
 # A variant is a branch with an unsigned integer discriminant and explicit options per value. Unknown discriminants
 # are errors (no defaults). Variants may include void to represent an empty branch.
 variant MyVariant : u8
-- 0 => MyPOD
-- 1 => MyOtherPOD
-- 2 => void
-- 3 => SmallSeq
+- 1 => MyPOD
+- 2 => MyOtherPOD
+- 3 => void
+- 4 => SmallSeq
 
 seq Root
 - name : ShortString

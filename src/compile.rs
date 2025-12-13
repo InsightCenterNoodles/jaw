@@ -260,104 +260,115 @@ struct CompileState {
 }
 
 impl CompileState {
-    fn lookup(&self, tname: &intermediate::TypeName) -> TypeID {
-        *match self.name_to_id.get(tname) {
-            Some(x) => x,
-            None => {
-                panic!("internal error, missing type name: {tname}")
-            }
-        }
+    fn lookup(&self, tname: &intermediate::TypeName) -> anyhow::Result<TypeID> {
+        let Some(x) = self.name_to_id.get(tname) else {
+            bail!("internal error, missing type name");
+        };
+        Ok(*x)
     }
 }
 
-fn string_to_range(range: String) -> RangeInclusive<u32> {
+fn string_to_range(range: String) -> anyhow::Result<RangeInclusive<u32>> {
     if let Some((a, b)) = range.split_once('-') {
-        RangeInclusive::new(a.parse().unwrap(), b.parse().unwrap())
+        Ok(RangeInclusive::new(a.parse()?, b.parse()?))
     } else {
-        let v = range.parse().unwrap();
-        RangeInclusive::new(v, v)
+        let v = range.parse()?;
+        Ok(RangeInclusive::new(v, v))
     }
 }
 
-fn convert(state: &CompileState, ty: intermediate::Type) -> (TypeID, Type) {
-    let this_id = state.lookup(&ty.ident);
+fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(TypeID, Type)> {
+    let this_id = state.lookup(&ty.ident)?;
 
     let new_kind = match ty.kind {
         intermediate::TypeKind::Alias(alias) => TypeKind::Alias(Alias {
-            other: state.lookup(&alias.other),
+            other: state.lookup(&alias.other)?,
         }),
         intermediate::TypeKind::Pack(pack) => TypeKind::Pack(Pack {
             members: pack
                 .members
                 .into_iter()
-                .map(|x| StructMember {
-                    name: x.name,
-                    ty: state.lookup(&x.ty),
-                    defined_at: x.defined_at,
+                .map(|x| -> anyhow::Result<StructMember> {
+                    Ok(StructMember {
+                        name: x.name,
+                        ty: state.lookup(&x.ty)?,
+                        defined_at: x.defined_at,
+                    })
                 })
-                .collect(),
+                .collect::<anyhow::Result<Vec<_>>>()?,
         }),
         intermediate::TypeKind::Enum(enm) => TypeKind::Enum(Enum {
-            underlying: state.lookup(&enm.ty),
+            underlying: state.lookup(&enm.ty)?,
             members: enm.members,
             default: enm.default,
         }),
         intermediate::TypeKind::Bitfld(bitfld) => TypeKind::Bitfld(Bitfld {
-            underlying: state.lookup(&bitfld.ty),
+            underlying: state.lookup(&bitfld.ty)?,
             members: bitfld
                 .members
                 .into_iter()
-                .map(|x| BitfldMember {
-                    name: x.name,
-                    underlying: state.lookup(&x.ty),
-                    range: string_to_range(x.range),
-                    defined_at: x.defined_at,
+                .map(|x| -> anyhow::Result<BitfldMember> {
+                    Ok(BitfldMember {
+                        name: x.name,
+                        underlying: state.lookup(&x.ty)?,
+                        range: string_to_range(x.range)?,
+                        defined_at: x.defined_at,
+                    })
                 })
-                .collect(),
+                .collect::<anyhow::Result<Vec<_>>>()?,
         }),
         intermediate::TypeKind::Variant(variant) => {
-            let convert_member = |member: intermediate::VariantMember| VariantMember {
-                ty: state.lookup(&member.ty),
-                value: member.value,
-                defined_at: member.defined_at,
-            };
+            let convert_member =
+                |member: intermediate::VariantMember| -> anyhow::Result<VariantMember> {
+                    Ok(VariantMember {
+                        ty: state.lookup(&member.ty)?,
+                        value: member.value,
+                        defined_at: member.defined_at,
+                    })
+                };
 
             TypeKind::Variant(Variant {
-                discriminant: state.lookup(&variant.ty),
-                members: variant.members.into_iter().map(convert_member).collect(),
+                discriminant: state.lookup(&variant.ty)?,
+                members: variant
+                    .members
+                    .into_iter()
+                    .map(convert_member)
+                    .collect::<anyhow::Result<Vec<_>>>()?,
             })
         }
         intermediate::TypeKind::Sequence(sequence) => TypeKind::Sequence(Sequence {
             members: sequence
                 .members
                 .into_iter()
-                .map(|x| StructMember {
-                    name: x.name,
-                    ty: state.lookup(&x.ty),
-                    defined_at: x.defined_at,
+                .map(|x| {
+                    Ok(StructMember {
+                        name: x.name,
+                        ty: state.lookup(&x.ty)?,
+                        defined_at: x.defined_at,
+                    })
                 })
-                .collect(),
+                .collect::<anyhow::Result<Vec<_>>>()?,
         }),
         intermediate::TypeKind::DynamicArray(dynamic_array) => {
             TypeKind::DynamicArray(DynamicArray {
-                size_type: state.lookup(&dynamic_array.size_type),
-                value_type: state.lookup(&dynamic_array.value_type),
+                size_type: state.lookup(&dynamic_array.size_type)?,
+                value_type: state.lookup(&dynamic_array.value_type)?,
             })
         }
         intermediate::TypeKind::FixedArray(fixed_array) => TypeKind::FixedArray(FixedArray {
             count: fixed_array.count,
-            value_type: state.lookup(&fixed_array.value_type),
+            value_type: state.lookup(&fixed_array.value_type)?,
         }),
     };
 
-    (
+    Ok((
         this_id,
         Type {
             ident: ty.ident,
             defined_at: ty.defined_at,
             kind: new_kind,
         },
-    )
+    ))
 }
 
 // MARK: Verify
@@ -497,6 +508,23 @@ fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
             .chain(value.default.iter().map(|x| &x.name)),
     )
     .with_context(ctx)?;
+
+    {
+        let mut set = HashSet::<i64>::default();
+
+        for enumerant in &value.members {
+            if set.contains(&enumerant.value) {
+                bail!(
+                    "Duplicate enumerant value: {} -> {} at {}",
+                    enumerant.name,
+                    enumerant.value,
+                    enumerant.defined_at
+                );
+            }
+
+            set.insert(enumerant.value);
+        }
+    }
 
     let underlying = verify_is_int_of(world, value.underlying, Signedness::Unsigned)
         .context("checking underlying type")
@@ -792,7 +820,14 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
         module
             .definitions
             .into_iter()
-            .map(|item| convert(&cs, item)),
+            .map(|item| convert(&cs, item))
+            .filter_map(|x| match x {
+                Ok(x) => Some(x),
+                Err(x) => {
+                    println!("Skipping {x}");
+                    None
+                }
+            }),
     );
 
     let sorted = toposort(&defs);

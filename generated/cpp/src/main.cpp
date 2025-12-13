@@ -1,4 +1,4 @@
-#include "basic.hpp"
+#include "example.hpp"
 #include "codec.hpp"
 
 #include <cstdio>
@@ -7,14 +7,42 @@
 #include <vector>
 #include <fstream>
 
-static void demand(bool condition, const char* label) {
+static void demand(bool condition, size_t at, const char* label) {
     if (condition) return;
-    std::printf("Error: %s\n", label);
+    std::printf("Error line %zu: %s\n", at, label);
+    exit(EXIT_FAILURE);
+}
+
+#define DEMAND(C) demand(C, __LINE__, #C)
+
+std::vector<uint8_t> operator""_bytes(const char* str, std::size_t size) {
+    return std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(str),
+                                reinterpret_cast<const uint8_t*>(str) + size);
 }
 
 static std::vector<uint8_t> to_bytes(const std::string& s) {
     return std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(s.data()),
                                 reinterpret_cast<const uint8_t*>(s.data()) + s.size());
+}
+
+bool operator==(example::ArrayRef<uint8_t> a, const char* str) {
+    // slow but who cares, this is for testing
+    auto local = std::string(str);
+
+    auto bytes = to_bytes(local);
+
+    std::vector<std::uint8_t> a_local;
+    a.copy_to_vector(a_local);
+
+    return std::equal(
+        a_local.begin(), a_local.end(), bytes.begin(), bytes.end());
+}
+
+template <class T>
+bool operator==(example::ArrayRef<T> a, std::vector<T> const& b) {
+    std::vector<T> local;
+    a.copy_to_vector(local);
+    return std::equal(local.begin(), local.end(), b.begin(), b.end());
 }
 
 static void usage() {
@@ -44,6 +72,86 @@ static bool write_all(const std::string& path, std::span<const std::byte> data) 
     return (bool)f;
 }
 
+static void validate(std::span<std::byte> data) {
+    using namespace example::readers;
+
+    auto reader = VecReader { .src = data };
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "pod-one");
+        auto ref = std::get<MyPODReader>(root.var);
+        DEMAND(ref.a_thing == 10);
+        DEMAND(ref.b_thing == 20);
+    }
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "");
+        auto ref = std::get<MyOtherPODReader>(root.var);
+
+        DEMAND(ref.first.a_thing == 1);
+        DEMAND(ref.first.b_thing == 0x1122334455667788ULL);
+
+        auto t = std::array<std::uint8_t, 4> { 1, 2, 3, 4 };
+
+        DEMAND(ref.second == t);
+    }
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "void");
+        auto ref = std::get<std::monostate>(root.var);
+    }
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "floats");
+        auto ref = std::get<SmallSeqReader>(root.var);
+
+        auto data = std::vector<float> { 1.0f, 2.5f, -3.25f, 0.0f };
+
+        DEMAND(ref.list == data);
+    }
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "pod-two");
+        auto ref = std::get<MyPODReader>(root.var);
+
+        DEMAND(ref.a_thing == 255);
+        DEMAND(ref.b_thing == 0xCAFEBABECAFED00DULL);
+    }
+
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "seq-long");
+
+        auto data = std::vector<float> {};
+
+        for (int i = 0; i < 10; ++i)
+            data.push_back(static_cast<float>(i) * 0.5f);
+
+        auto ref = std::get<SmallSeqReader>(root.var);
+
+        DEMAND(ref.list == data);
+    }
+
+    std::printf("Validation complete\n");
+}
+
 int main(int argc, char** argv) {
     std::string dump_path;
     std::string read_path;
@@ -53,193 +161,125 @@ int main(int argc, char** argv) {
         else if (a == "--read" && i + 1 < argc) { read_path = argv[++i]; }
         else { usage(); }
     }
-    using basic::Root;
-    using basic::MyPOD;
-    using basic::MyOtherPOD;
-    using basic::MyVariant;
-    using basic::SmallSeq;
 
-    // Build several Root messages with different MyVariant alternatives
-    std::vector<Root> expected;
+    using namespace example::writers;
 
-    // 1) Variant = MyPOD
-    {
-        Root r{};
-        r.name = to_bytes("pod-one");
-        r.var.value = MyPOD{ .a_thing = 10, .b_thing = 20 };
-        expected.push_back(r);
-    }
-
-    // 2) Variant = MyOtherPOD
-    {
-        Root r{};
-        r.name = to_bytes(""); // empty name
-        r.var.value = MyOtherPOD{
-            .first = MyPOD{ .a_thing = 1, .b_thing = 0x1122334455667788ULL },
-            .second = { 1, 2, 3, 4 }
-        };
-        expected.push_back(r);
-    }
-
-    // 3) Variant = void
-    {
-        Root r{};
-        r.name = to_bytes("void");
-        r.var.value = std::monostate{};
-        expected.push_back(r);
-    }
-
-    // 4) Variant = SmallSeq with floats
-    {
-        Root r{};
-        r.name = to_bytes("floats");
-        SmallSeq seq{};
-        seq.list = { 1.0f, 2.5f, -3.25f, 0.0f };
-        r.var.value = seq;
-        expected.push_back(r);
-    }
-
-    // 5) Another MyPOD with larger values
-    {
-        Root r{};
-        r.name = to_bytes("pod-two");
-        r.var.value = MyPOD{ .a_thing = 255, .b_thing = 0xCAFEBABECAFED00DULL };
-        expected.push_back(r);
-    }
-
-    // 6) Another SmallSeq, longer
-    {
-        Root r{};
-        r.name = to_bytes("seq-long");
-        SmallSeq seq{};
-        for (int i = 0; i < 10; ++i) seq.list.push_back(static_cast<float>(i) * 0.5f);
-        r.var.value = seq;
-        expected.push_back(r);
-    }
 
     // If reading from a dump, verify it matches the expected dataset
     if (!read_path.empty()) {
         auto content = read_all(read_path);
-        auto reader = VecReader{ .src = std::span<const std::byte>(content.data(), content.size()) };
-        std::vector<Root> actual;
-        for (size_t i = 0; i < expected.size(); ++i) {
-            Root r{};
-            bool ok = basic::read(reader, r);
-            demand(ok, "read Root");
-            actual.push_back(std::move(r));
-        }
-        demand(reader.src.empty(), "buffer fully consumed");
 
-        demand(actual.size() == expected.size(), "size matches");
-        for (size_t i = 0; i < expected.size(); ++i) {
-            const auto& e = expected[i];
-            const auto& a = actual[i];
-            demand(a.name == e.name, "name matches");
-            demand(a.var.value.index() == e.var.value.index(), "variant tag matches");
-            switch (e.var.value.index()) {
-                case 0: {
-                    const auto& ep = std::get<0>(e.var.value);
-                    const auto& ap = std::get<0>(a.var.value);
-                    demand(ap.a_thing == ep.a_thing, "MyPOD.a_thing");
-                    demand(ap.b_thing == ep.b_thing, "MyPOD.b_thing");
-                    break;
-                }
-                case 1: {
-                    const auto& eo = std::get<1>(e.var.value);
-                    const auto& ao = std::get<1>(a.var.value);
-                    demand(ao.first.a_thing == eo.first.a_thing, "MyOtherPOD.first.a_thing");
-                    demand(ao.first.b_thing == eo.first.b_thing, "MyOtherPOD.first.b_thing");
-                    for (size_t j = 0; j < eo.second.size(); ++j) {
-                        demand(ao.second[j] == eo.second[j], "MyOtherPOD.second[j]");
-                    }
-                    break;
-                }
-                case 2: {
-                    // void: no payload to compare
-                    break;
-                }
-                case 3: {
-                    const auto& es = std::get<3>(e.var.value);
-                    const auto& as = std::get<3>(a.var.value);
-                    demand(as.list.size() == es.list.size(), "SmallSeq.size");
-                    for (size_t j = 0; j < es.list.size(); ++j) {
-                        demand(as.list[j] == es.list[j], "SmallSeq.value[j]");
-                    }
-                    break;
-                }
-                default: demand(false, "unexpected variant index"); break;
-            }
-        }
-        std::printf("Verified dump ok (%zu messages)\n", expected.size());
+        validate(content);
+
     } else {
-        // Serialize all messages
+
+        // Build several Root messages with different MyVariant alternatives
+
         std::vector<std::byte> content;
+
+        auto writer = VecWriter { .dest = content };
+
+        // 1) Variant = MyPOD
         {
-            auto writer = VecWriter{ .dest = content };
-            for (const auto& r : expected) {
-                bool ok = basic::write(writer, r);
-                demand(ok, "write Root");
-            }
+            auto pod_one = "pod-one"_bytes;
+
+            auto mypod = MyPODWriter { .a_thing = 10, .b_thing = 20 };
+
+            RootWriter r {
+                .name = pod_one,
+                .var  = &mypod,
+            };
+
+            DEMAND(write(writer, r));
         }
 
-        // Read them back and validate
-        std::vector<Root> actual;
+        // 2) Variant = MyOtherPOD
         {
-            auto reader = VecReader{ .src = std::span<const std::byte>(content.data(), content.size()) };
-            for (size_t i = 0; i < expected.size(); ++i) {
-                Root r{};
-                bool ok = basic::read(reader, r);
-                demand(ok, "read Root");
-                actual.push_back(std::move(r));
-            }
-            // Ensure buffer fully consumed
-            demand(reader.src.empty(), "buffer fully consumed");
+            auto empty = ""_bytes;
+
+            auto other = MyOtherPODWriter {
+                .first  = MyPODWriter { .a_thing = 1,
+                                        .b_thing = 0x1122334455667788ULL },
+                .second = { 1, 2, 3, 4 }
+            };
+
+            RootWriter r {
+                .name = empty,
+                .var  = &other,
+            };
+
+            DEMAND(write(writer, r));
         }
 
-        // Compare expected vs actual content
-        demand(actual.size() == expected.size(), "size matches");
-        for (size_t i = 0; i < expected.size(); ++i) {
-            const auto& e = expected[i];
-            const auto& a = actual[i];
+        // 3) Variant = void
+        {
+            auto name = "void"_bytes;
 
-            demand(a.name == e.name, "name matches");
-            demand(a.var.value.index() == e.var.value.index(), "variant tag matches");
+            RootWriter r {
+                .name = name,
+                .var  = std::monostate(),
+            };
 
-            switch (e.var.value.index()) {
-                case 0: {
-                    const auto& ep = std::get<0>(e.var.value);
-                    const auto& ap = std::get<0>(a.var.value);
-                    demand(ap.a_thing == ep.a_thing, "MyPOD.a_thing");
-                    demand(ap.b_thing == ep.b_thing, "MyPOD.b_thing");
-                    break;
-                }
-                case 1: {
-                    const auto& eo = std::get<1>(e.var.value);
-                    const auto& ao = std::get<1>(a.var.value);
-                    demand(ao.first.a_thing == eo.first.a_thing, "MyOtherPOD.first.a_thing");
-                    demand(ao.first.b_thing == eo.first.b_thing, "MyOtherPOD.first.b_thing");
-                    for (size_t j = 0; j < eo.second.size(); ++j) {
-                        demand(ao.second[j] == eo.second[j], "MyOtherPOD.second[j]");
-                    }
-                    break;
-                }
-                case 2: {
-                    // void: no payload to compare
-                    break;
-                }
-                case 3: {
-                    const auto& es = std::get<3>(e.var.value);
-                    const auto& as = std::get<3>(a.var.value);
-                    demand(as.list.size() == es.list.size(), "SmallSeq.size");
-                    for (size_t j = 0; j < es.list.size(); ++j) {
-                        demand(as.list[j] == es.list[j], "SmallSeq.value[j]");
-                    }
-                    break;
-                }
-                default: demand(false, "unexpected variant index"); break;
-            }
+            DEMAND(write(writer, r));
         }
-        std::printf("All checks passed (%zu messages)\n", expected.size());
+
+        // 4) Variant = SmallSeq with floats
+        {
+
+            auto name = "floats"_bytes;
+
+            auto data = std::vector<float> { 1.0f, 2.5f, -3.25f, 0.0f };
+
+            SmallSeqWriter seq { .list = data };
+
+            RootWriter r {
+                .name = name,
+                .var  = &seq,
+            };
+
+
+            DEMAND(write(writer, r));
+        }
+
+        // 5) Another MyPOD with larger values
+        {
+
+            auto name = "pod-two"_bytes;
+
+            auto my_pod = MyPODWriter { .a_thing = 255,
+                                        .b_thing = 0xCAFEBABECAFED00DULL };
+
+
+            RootWriter r {
+                .name = name,
+                .var  = &my_pod,
+            };
+
+            DEMAND(write(writer, r));
+        }
+
+        // 6) Another SmallSeq, longer
+        {
+            auto name = "seq-long"_bytes;
+
+            auto data = std::vector<float> {};
+
+            for (int i = 0; i < 10; ++i)
+                data.push_back(static_cast<float>(i) * 0.5f);
+
+
+            SmallSeqWriter seq { .list = data };
+
+            RootWriter r {
+                .name = name,
+                .var  = &seq,
+            };
+
+            DEMAND(write(writer, r));
+        }
+
+        validate(content);
+
 
         if (!dump_path.empty()) {
             if (write_all(dump_path, std::span<const std::byte>(content.data(), content.size()))) {

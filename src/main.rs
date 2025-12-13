@@ -36,7 +36,7 @@ fn process() -> anyhow::Result<()> {
 
     let world = jaw::compile::compile(module)?;
 
-    codegen::emit_cpp(&world, "out.cpp")?;
+    codegen::emit_cpp(&world, args.output)?;
 
     Ok(())
 }
