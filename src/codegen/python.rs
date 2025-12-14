@@ -95,7 +95,8 @@ impl<'a> PythonContext<'a> {
             TypeKind::Variant(_) => self.name_of(id),
             TypeKind::Sequence(_) => self.name_of(id),
             TypeKind::DynamicArray(arr) => {
-                if self.direct_primitive(arr.value_type).is_some() {
+                if let Some(_x) = self.direct_primitive(arr.value_type) {
+                    // can we use x to constrain here?
                     "array.array".into()
                 } else {
                     "list".into()
@@ -122,6 +123,7 @@ fn emit_preamble(out: &mut impl Sink) {
     out.wln("import sys");
     out.wln("from dataclasses import dataclass");
     out.wln("from typing import Iterable");
+    out.wln("from typing import ClassVar");
     out.newline();
 
     out.wln("class Reader:");
@@ -309,7 +311,7 @@ fn emit_type_definition(
                 let mut idt = out.indent();
                 for m in &seq.members {
                     let hint = ctx.type_hint(m.ty)?;
-                    idt.wln(&format!("{}: {} | None = None", sanitize(&m.name), hint));
+                    idt.wln(&format!("{}: {}", sanitize(&m.name), hint));
                 }
             }
             out.newline();
@@ -320,7 +322,7 @@ fn emit_type_definition(
             {
                 let mut idt = out.indent();
                 idt.wln("tag: int = 0");
-                idt.wln("value: object | None = None");
+                idt.wln("value: object = None");
 
                 for m in &v.members {
                     let mem_type_name = ctx.name_of(m.ty);
@@ -334,12 +336,26 @@ fn emit_type_definition(
 
                     {
                         let mut idt = idt.indent();
-                        idt.wln(&format!("ret = {name}()"));
-                        idt.wln(&format!("ret.tag = {}", m.value));
-                        if !ctx.is_void(m.ty) {
-                            idt.wln(&format!("ret.value = value"));
+                        if ctx.is_void(m.ty) {
+                            idt.wln(&format!("return {name}({}, None)", m.value));
+                        } else {
+                            idt.wln(&format!("return {name}({}, value)", m.value));
                         }
-                        idt.wln(&format!("return ret"));
+                    }
+                }
+
+                for m in &v.members {
+                    let mem_type_name = ctx.name_of(m.ty);
+
+                    idt.wln(&format!(
+                        "type_{}: ClassVar[int] = {}",
+                        mem_type_name, m.value
+                    ));
+
+                    idt.wln(&format!("def is_{}(self):", mem_type_name));
+                    {
+                        let mut idt = idt.indent();
+                        idt.wln(&format!("return self.tag == self.type_{}", mem_type_name));
                     }
                 }
             }

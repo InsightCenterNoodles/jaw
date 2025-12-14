@@ -6,6 +6,7 @@ import struct
 import sys
 from dataclasses import dataclass
 from typing import Iterable
+from typing import ClassVar
 
 class Reader:
     def __init__(self, data):
@@ -97,16 +98,16 @@ def _write_primitive_array(writer, fmt, typecode, values: Iterable):
     writer.write_bytes(arr.tobytes())
 
 @enum.unique
-class PlainEnum(enum.IntEnum):
-    F1 = 0
-    F2 = 1
-
-@enum.unique
 class BetterEnum(enum.IntEnum):
     A = 0
     B = 1
     DEFAULT = 255
     __default__ = DEFAULT
+
+@enum.unique
+class PlainEnum(enum.IntEnum):
+    F1 = 0
+    F2 = 1
 
 @dataclass
 class MyPOD:
@@ -121,70 +122,55 @@ class MyFlags:
 
 @dataclass
 class SmallSeq:
-    list: array.array | None = None
+    list: array.array
 
 @dataclass
 class MyOtherPOD:
     first: MyPOD
     second: array.array
 
-@dataclass
-class MyVariant:
-    tag: int = 0
-    value: object | None = None
-    @staticmethod
-    def make_MyPOD(value: MyPOD):
-        ret = MyVariant()
-        ret.tag = 1
-        ret.value = value
-        return ret
-    @staticmethod
-    def make_MyOtherPOD(value: MyOtherPOD):
-        ret = MyVariant()
-        ret.tag = 2
-        ret.value = value
-        return ret
-    @staticmethod
-    def make_void():
-        ret = MyVariant()
-        ret.tag = 3
-        return ret
-    @staticmethod
-    def make_SmallSeq(value: SmallSeq):
-        ret = MyVariant()
-        ret.tag = 4
-        ret.value = value
-        return ret
-
 Alpha = MyOtherPOD
 
 @dataclass
-class Root:
-    name: array.array | None = None
-    var: MyVariant | None = None
+class MyVariant:
+    tag: int = 0
+    value: object = None
+    @staticmethod
+    def make_MyPOD(value: MyPOD):
+        return MyVariant(1, value)
+    @staticmethod
+    def make_MyOtherPOD(value: MyOtherPOD):
+        return MyVariant(2, value)
+    @staticmethod
+    def make_void():
+        return MyVariant(3, None)
+    @staticmethod
+    def make_SmallSeq(value: SmallSeq):
+        return MyVariant(4, value)
+    type_MyPOD: ClassVar[int] = 1
+    def is_MyPOD(self):
+        return self.tag == self.type_MyPOD
+    type_MyOtherPOD: ClassVar[int] = 2
+    def is_MyOtherPOD(self):
+        return self.tag == self.type_MyOtherPOD
+    type_void: ClassVar[int] = 3
+    def is_void(self):
+        return self.tag == self.type_void
+    type_SmallSeq: ClassVar[int] = 4
+    def is_SmallSeq(self):
+        return self.tag == self.type_SmallSeq
 
-def read_PlainEnum(reader):
-    raw = reader.read_u8()
-    if raw in PlainEnum._value2member_map_:
-        return PlainEnum(raw)
-    raise ValueError(f'invalid discriminant for PlainEnum: {raw!r}')
-    
-def write_PlainEnum(writer, value):
-    writer.write_u8(int(value))
-    
+@dataclass
+class Root:
+    name: array.array
+    var: MyVariant
+
 def read_ShortString(reader):
     count = reader.read_u8()
     return _read_primitive_array(reader, '<B', 'B', count)
     
 def write_ShortString(writer, values):
     writer.write_u8(len(values))
-    _write_primitive_array(writer, '<B', 'B', values)
-    
-def read_FixedString(reader):
-    return _read_primitive_array(reader, '<B', 'B', 4)
-    
-def write_FixedString(writer, values):
-    if len(values) != 4: raise ValueError('expected 4 items')
     _write_primitive_array(writer, '<B', 'B', values)
     
 def read_BetterEnum(reader):
@@ -195,6 +181,22 @@ def read_BetterEnum(reader):
     
 def write_BetterEnum(writer, value):
     writer.write_u8(int(value))
+    
+def read_PlainEnum(reader):
+    raw = reader.read_u8()
+    if raw in PlainEnum._value2member_map_:
+        return PlainEnum(raw)
+    raise ValueError(f'invalid discriminant for PlainEnum: {raw!r}')
+    
+def write_PlainEnum(writer, value):
+    writer.write_u8(int(value))
+    
+def read_FixedString(reader):
+    return _read_primitive_array(reader, '<B', 'B', 4)
+    
+def write_FixedString(writer, values):
+    if len(values) != 4: raise ValueError('expected 4 items')
+    _write_primitive_array(writer, '<B', 'B', values)
     
 def read_Data(reader):
     count = reader.read_u8()
@@ -247,6 +249,12 @@ def write_MyOtherPOD(writer, value):
     write_MyPOD(writer, value.first)
     write_FixedString(writer, value.second)
     
+def read_Alpha(reader):
+    return read_MyOtherPOD(reader)
+    
+def write_Alpha(writer, value):
+    write_MyOtherPOD(writer, value)
+    
 def read_MyVariant(reader):
     tag = reader.read_u8()
     if tag == 1:
@@ -276,12 +284,6 @@ def write_MyVariant(writer, value):
         write_SmallSeq(writer, value.value)
         return
     raise ValueError(f'unknown tag for MyVariant: {value.tag!r}')
-    
-def read_Alpha(reader):
-    return read_MyOtherPOD(reader)
-    
-def write_Alpha(writer, value):
-    write_MyOtherPOD(writer, value)
     
 def read_Root(reader):
     return Root(
