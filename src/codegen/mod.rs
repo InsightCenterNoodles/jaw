@@ -1,4 +1,5 @@
 mod cpp;
+mod python;
 
 use std::{fmt::Display, io::Write, path::Path};
 
@@ -67,7 +68,9 @@ impl Outfile {
     }
 
     fn indent<'a>(&'a mut self) -> Indenter<'a> {
-        self.wln(self.0.indent_char);
+        if !self.0.indent_char.is_empty() {
+            self.wln(self.0.indent_char);
+        }
         self.0.indent += 1;
         Indenter(&mut self.0)
     }
@@ -95,7 +98,9 @@ impl<'a, T: Display> std::ops::AddAssign<T> for Indenter<'a> {
 impl<'a> Drop for Indenter<'a> {
     fn drop(&mut self) {
         self.0.indent -= 1;
-        self.wln(self.0.dedent_char);
+        if !self.0.dedent_char.is_empty() {
+            self.wln(self.0.dedent_char);
+        }
     }
 }
 
@@ -110,9 +115,11 @@ impl<'a> Indenter<'a> {
     }
 
     fn indent<'b>(&'b mut self) -> Indenter<'b> {
-        self.wln(self.0.indent_char);
+        if !self.0.indent_char.is_empty() {
+            self.wln(self.0.indent_char);
+        }
         self.0.indent += 1;
-        Indenter(&mut self.0)
+        Indenter(self.0)
     }
 }
 
@@ -150,6 +157,13 @@ pub fn emit_cpp(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
         .with_context(|| format!("while generating C++ into {}", path.display()))
 }
 
+pub fn emit_python(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut out = open_outfile(path, "", "")?;
+    python::emit(world, &mut out)
+        .with_context(|| format!("while generating Python into {}", path.display()))
+}
+
 trait Sink {
     fn wln(&mut self, s: &str);
     fn indent(&mut self) -> Indenter<'_>;
@@ -176,5 +190,15 @@ impl<'a> Sink for Indenter<'a> {
 
     fn indent(&mut self) -> Indenter<'_> {
         Indenter::indent(self)
+    }
+}
+
+impl<T: Sink + ?Sized> Sink for &mut T {
+    fn wln(&mut self, s: &str) {
+        (**self).wln(s);
+    }
+
+    fn indent(&mut self) -> Indenter<'_> {
+        (**self).indent()
     }
 }

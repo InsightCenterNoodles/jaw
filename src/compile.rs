@@ -262,7 +262,7 @@ struct CompileState {
 impl CompileState {
     fn lookup(&self, tname: &intermediate::TypeName) -> anyhow::Result<TypeID> {
         let Some(x) = self.name_to_id.get(tname) else {
-            bail!("internal error, missing type name");
+            bail!("unknown type name `{tname}`");
         };
         Ok(*x)
     }
@@ -282,36 +282,59 @@ fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(Type
 
     let new_kind = match ty.kind {
         intermediate::TypeKind::Alias(alias) => TypeKind::Alias(Alias {
-            other: state.lookup(&alias.other)?,
+            other: state
+                .lookup(&alias.other)
+                .with_context(|| format!("while resolving alias {}", ty.ident))?,
         }),
         intermediate::TypeKind::Pack(pack) => TypeKind::Pack(Pack {
             members: pack
                 .members
                 .into_iter()
                 .map(|x| -> anyhow::Result<StructMember> {
+                    let name_clone = x.name.clone();
                     Ok(StructMember {
                         name: x.name,
-                        ty: state.lookup(&x.ty)?,
+                        ty: state.lookup(&x.ty).with_context(|| {
+                            format!(
+                                "while resolving member {}.{} at {}",
+                                ty.ident, name_clone, x.defined_at
+                            )
+                        })?,
                         defined_at: x.defined_at,
                     })
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?,
         }),
         intermediate::TypeKind::Enum(enm) => TypeKind::Enum(Enum {
-            underlying: state.lookup(&enm.ty)?,
+            underlying: state
+                .lookup(&enm.ty)
+                .with_context(|| format!("while resolving enum base type for {}", ty.ident))?,
             members: enm.members,
             default: enm.default,
         }),
         intermediate::TypeKind::Bitfld(bitfld) => TypeKind::Bitfld(Bitfld {
-            underlying: state.lookup(&bitfld.ty)?,
+            underlying: state
+                .lookup(&bitfld.ty)
+                .with_context(|| format!("while resolving bitfield base for {}", ty.ident))?,
             members: bitfld
                 .members
                 .into_iter()
                 .map(|x| -> anyhow::Result<BitfldMember> {
+                    let name_clone = x.name.clone();
                     Ok(BitfldMember {
                         name: x.name,
-                        underlying: state.lookup(&x.ty)?,
-                        range: string_to_range(x.range)?,
+                        underlying: state.lookup(&x.ty).with_context(|| {
+                            format!(
+                                "while resolving bitfield member {}.{} at {}",
+                                ty.ident, name_clone, x.defined_at
+                            )
+                        })?,
+                        range: string_to_range(x.range).with_context(|| {
+                            format!(
+                                "while parsing bit range for {}.{} at {}",
+                                ty.ident, name_clone, x.defined_at
+                            )
+                        })?,
                         defined_at: x.defined_at,
                     })
                 })
@@ -321,14 +344,21 @@ fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(Type
             let convert_member =
                 |member: intermediate::VariantMember| -> anyhow::Result<VariantMember> {
                     Ok(VariantMember {
-                        ty: state.lookup(&member.ty)?,
+                        ty: state.lookup(&member.ty).with_context(|| {
+                            format!(
+                                "while resolving variant member type {} at {}",
+                                member.ty, member.defined_at
+                            )
+                        })?,
                         value: member.value,
                         defined_at: member.defined_at,
                     })
                 };
 
             TypeKind::Variant(Variant {
-                discriminant: state.lookup(&variant.ty)?,
+                discriminant: state.lookup(&variant.ty).with_context(|| {
+                    format!("while resolving variant discriminant for {}", ty.ident)
+                })?,
                 members: variant
                     .members
                     .into_iter()
@@ -341,9 +371,15 @@ fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(Type
                 .members
                 .into_iter()
                 .map(|x| {
+                    let name_clone = x.name.clone();
                     Ok(StructMember {
                         name: x.name,
-                        ty: state.lookup(&x.ty)?,
+                        ty: state.lookup(&x.ty).with_context(|| {
+                            format!(
+                                "while resolving member {}.{} at {}",
+                                ty.ident, name_clone, x.defined_at
+                            )
+                        })?,
                         defined_at: x.defined_at,
                     })
                 })
@@ -351,13 +387,28 @@ fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(Type
         }),
         intermediate::TypeKind::DynamicArray(dynamic_array) => {
             TypeKind::DynamicArray(DynamicArray {
-                size_type: state.lookup(&dynamic_array.size_type)?,
-                value_type: state.lookup(&dynamic_array.value_type)?,
+                size_type: state.lookup(&dynamic_array.size_type).with_context(|| {
+                    format!(
+                        "while resolving dynamic array count type for {} at {}",
+                        ty.ident, ty.defined_at
+                    )
+                })?,
+                value_type: state.lookup(&dynamic_array.value_type).with_context(|| {
+                    format!(
+                        "while resolving dynamic array element type for {} at {}",
+                        ty.ident, ty.defined_at
+                    )
+                })?,
             })
         }
         intermediate::TypeKind::FixedArray(fixed_array) => TypeKind::FixedArray(FixedArray {
             count: fixed_array.count,
-            value_type: state.lookup(&fixed_array.value_type)?,
+            value_type: state.lookup(&fixed_array.value_type).with_context(|| {
+                format!(
+                    "while resolving fixed array element type for {} at {}",
+                    ty.ident, ty.defined_at
+                )
+            })?,
         }),
     };
 
@@ -585,7 +636,7 @@ fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()>
             );
         }
 
-        let len = (end - start + 1) as u32;
+        let len = end - start + 1;
         let mask = ((1u128 << len) - 1) << start;
         if occupied & mask != 0 {
             bail!(
@@ -761,7 +812,7 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
             .map(|x| {
                 let tname = TypeName::from(x.to_string());
                 (
-                    x.clone(),
+                    x,
                     allocator.next(),
                     Type {
                         ident: tname,
@@ -816,21 +867,14 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
 
     let cs = CompileState { name_to_id };
 
-    defs.extend(
-        module
-            .definitions
-            .into_iter()
-            .map(|item| convert(&cs, item))
-            .filter_map(|x| match x {
-                Ok(x) => Some(x),
-                Err(x) => {
-                    println!("Skipping {x}");
-                    None
-                }
-            }),
-    );
+    let converted = module
+        .definitions
+        .into_iter()
+        .map(|item| convert(&cs, item))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    defs.extend(converted);
 
-    let sorted = toposort(&defs);
+    let sorted = toposort(&defs)?;
 
     verify(World {
         definitions: defs,
@@ -865,7 +909,61 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
     }
 }
 
-fn toposort(defs: &HashMap<TypeID, Type>) -> Vec<TypeID> {
+fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Visiting,
+        Visited,
+    }
+
+    fn dfs(
+        node: TypeID,
+        defs: &HashMap<TypeID, Type>,
+        state: &mut HashMap<TypeID, State>,
+        stack: &mut Vec<TypeID>,
+    ) -> Option<Vec<TypeID>> {
+        state.insert(node, State::Visiting);
+        stack.push(node);
+
+        let ty = defs.get(&node)?;
+        for dep in direct_dependencies(ty) {
+            if !defs.contains_key(&dep) {
+                continue;
+            }
+            if matches!(state.get(&dep), Some(State::Visiting)) {
+                let start = stack.iter().position(|&x| x == dep).unwrap_or(0);
+                let mut cycle = stack[start..].to_vec();
+                cycle.push(dep);
+                return Some(cycle);
+            }
+            if !matches!(state.get(&dep), Some(State::Visited)) {
+                if let Some(found) = dfs(dep, defs, state, stack) {
+                    return Some(found);
+                }
+            }
+        }
+
+        state.insert(node, State::Visited);
+        stack.pop();
+        None
+    }
+
+    let mut state = HashMap::new();
+    let mut stack = Vec::new();
+
+    for &id in defs.keys() {
+        if state.contains_key(&id) {
+            continue;
+        }
+        if let Some(cycle) = dfs(id, defs, &mut state, &mut stack) {
+            return Some(cycle);
+        }
+    }
+
+    None
+}
+
+fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
     let mut indegree: HashMap<TypeID, usize> = HashMap::new();
     let mut dependents: HashMap<TypeID, Vec<TypeID>> = HashMap::new();
 
@@ -908,15 +1006,21 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> Vec<TypeID> {
     }
 
     if order.len() < indegree.len() {
-        let already: HashSet<_> = order.iter().copied().collect();
-        for &id in indegree.keys() {
-            if !already.contains(&id) {
-                order.push(id);
-            }
+        if let Some(cycle) = find_cycle(defs) {
+            let cycle_names: Vec<_> = cycle
+                .into_iter()
+                .filter_map(|id| defs.get(&id).map(|ty| ty.ident.to_string()))
+                .collect();
+            bail!(
+                "cyclic type definitions detected: {}",
+                cycle_names.join(" -> ")
+            );
+        } else {
+            bail!("cyclic type definitions detected");
         }
     }
 
-    order
+    Ok(order)
 }
 
 #[cfg(test)]
@@ -951,5 +1055,36 @@ dyn_array Bad : u8 * void
         let err = compile(module).expect_err("compile should reject void element type");
         let msg = format!("{err:#}");
         assert!(msg.contains("void"), "unexpected error message: {msg}");
+    }
+
+    #[test]
+    fn cycles_are_rejected() {
+        let src = r#"
+alias A : B
+alias B : A
+"#;
+
+        let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+        let err = compile(module).expect_err("compile should reject cycles");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.to_lowercase().contains("cyclic"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_types_are_rejected() {
+        let src = r#"
+alias A : Missing
+"#;
+
+        let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+        let err = compile(module).expect_err("compile should reject unknown type names");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Missing"),
+            "unexpected error message, wanted type name: {msg}"
+        );
     }
 }

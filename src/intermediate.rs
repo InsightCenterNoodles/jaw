@@ -1064,10 +1064,10 @@ mod tests {
                 assert_eq!(
                     variant_sig(&var.members),
                     vec![
-                        (0, "MyPOD"),
-                        (1, "MyOtherPOD"),
-                        (2, "void"),
-                        (3, "SmallSeq")
+                        (1, "MyPOD"),
+                        (2, "MyOtherPOD"),
+                        (3, "void"),
+                        (4, "SmallSeq")
                     ]
                 );
             }

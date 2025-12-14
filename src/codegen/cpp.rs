@@ -748,9 +748,9 @@ fn emit_read_impl(
                 idt.wln("return read_scalar(reader, value);");
             } else {
                 let mut idt = out.indent();
-                idt.wln(&format!(
-                    "for (auto& elem : value) {{ if (!read_value(reader, elem)) return false; }}"
-                ));
+                idt.wln(
+                    "for (auto& elem : value) { if (!read_value(reader, elem)) return false; }",
+                );
                 idt.wln("return true;");
             }
         }

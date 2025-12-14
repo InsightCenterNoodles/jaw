@@ -1,8 +1,15 @@
 use std::path::PathBuf;
 
-use anyhow::Ok;
-use clap::Parser;
+use anyhow::bail;
+use clap::{Parser, ValueEnum};
 use jaw::codegen;
+
+#[derive(Debug, Clone, ValueEnum)]
+enum GeneratorKind {
+    Cpp,
+    Python,
+    Rust,
+}
 
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
@@ -11,8 +18,8 @@ struct Arguments {
     input: PathBuf,
 
     /// Type of code to generate
-    //#[arg(short, long, value_enum)]
-    //kind: KnownGenerators,
+    #[arg(short, long, value_enum, default_value = "cpp")]
+    kind: GeneratorKind,
 
     /// Output path, based on input
     output: PathBuf,
@@ -36,7 +43,11 @@ fn process() -> anyhow::Result<()> {
 
     let world = jaw::compile::compile(module)?;
 
-    codegen::emit_cpp(&world, args.output)?;
+    match args.kind {
+        GeneratorKind::Cpp => codegen::emit_cpp(&world, args.output)?,
+        GeneratorKind::Python => codegen::emit_python(&world, args.output)?,
+        GeneratorKind::Rust => bail!("Rust generator not implemented yet"),
+    }
 
     Ok(())
 }

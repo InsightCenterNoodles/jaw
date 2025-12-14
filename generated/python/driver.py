@@ -12,7 +12,7 @@ import argparse
 import ctypes
 from typing import List
 
-import basic
+import example
 
 
 def build_expected() -> List[basic.Root]:
