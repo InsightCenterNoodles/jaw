@@ -420,20 +420,21 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             let mut idt = out.indent();
             let base_read = read_primitive_method(ctx, bitfld.underlying)?;
             idt.wln(&format!("raw = reader.{base_read}()"));
+            for m in &bitfld.members {
+                let start = m.range.start();
+                let end = m.range.end();
+                let width = end - start + 1;
+                let mask = (1u128 << width) - 1;
+                let field = sanitize(&m.name);
+                let value_expr = format!("(raw >> {}) & 0x{:X}", start, mask);
+                emit_bitfield_member_read(ctx, &mut idt, &field, m.underlying, &value_expr)?;
+            }
             idt.wln(&format!("return {name}("));
             {
                 let mut args = idt.indent();
                 for m in &bitfld.members {
-                    let start = m.range.start();
-                    let end = m.range.end();
-                    let width = end - start + 1;
-                    let mask = (1u128 << width) - 1;
-                    args.wln(&format!(
-                        "{} = (raw >> {}) & 0x{:X},",
-                        sanitize(&m.name),
-                        start,
-                        mask
-                    ));
+                    let field = sanitize(&m.name);
+                    args.wln(&format!("{field} = {field},"));
                 }
             }
             idt.wln(")");
@@ -488,12 +489,12 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             } else {
                 idt.wln("out = []");
                 idt.wln("for _ in range(int(count)):");
-                let mut body = idt.indent();
                 {
+                    let mut body = idt.indent();
                     let expr = read_expr(ctx, arr.value_type, "reader")?;
                     body.wln(&format!("out.append({expr})"));
-                    body.wln("return out");
                 }
+                idt.wln("return out");
             }
             idt.newline();
         }
@@ -510,12 +511,12 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             } else {
                 idt.wln("out = []");
                 idt.wln(&format!("for _ in range({}):", arr.count));
-                let mut body = idt.indent();
                 {
+                    let mut body = idt.indent();
                     let expr = read_expr(ctx, arr.value_type, "reader")?;
                     body.wln(&format!("out.append({expr})"));
-                    body.wln("return out");
                 }
+                idt.wln("return out");
             }
             idt.newline();
         }
@@ -681,6 +682,51 @@ fn write_value(
                 value_expr
             ));
         }
+    }
+    Ok(())
+}
+
+fn emit_bitfield_member_read(
+    ctx: &PythonContext,
+    out: &mut impl Sink,
+    field_name: &str,
+    ty_id: TypeID,
+    value_expr: &str,
+) -> Result<()> {
+    let ty = ctx.world.lookup(ty_id);
+    match &ty.kind {
+        TypeKind::Primitive(_) => {
+            out.wln(&format!("{field_name} = int({value_expr})"));
+        }
+        TypeKind::Alias(alias) => {
+            emit_bitfield_member_read(ctx, out, field_name, alias.other, value_expr)?
+        }
+        TypeKind::Enum(enm) => {
+            let enum_name = ctx.name_of(ty_id);
+            out.wln(&format!("{field_name}_raw = int({value_expr})"));
+            out.wln(&format!(
+                "if {field_name}_raw in {enum_name}._value2member_map_:"
+            ));
+            {
+                let mut body = out.indent();
+                body.wln(&format!("{field_name} = {enum_name}({field_name}_raw)"));
+            }
+            if let Some(default) = &enm.default {
+                out.wln("else:");
+                let mut body = out.indent();
+                body.wln(&format!(
+                    "{field_name} = {enum_name}.{}",
+                    sanitize(&default.name)
+                ));
+            } else {
+                out.wln("else:");
+                let mut body = out.indent();
+                body.wln(&format!(
+                    "raise ValueError(f'invalid discriminant for {enum_name} in bitfield: {{{field_name}_raw!r}}')"
+                ));
+            }
+        }
+        _ => bail!("unsupported bitfield member type"),
     }
     Ok(())
 }

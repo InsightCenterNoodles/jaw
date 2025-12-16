@@ -2,9 +2,8 @@ use std::fs;
 use std::io::{self, Cursor};
 use std::path::PathBuf;
 
-// Include generated Rust module for assets/basic.jaw
-include!(concat!(env!("OUT_DIR"), "/basic.rs"));
-use basic::*;
+#[allow(dead_code)]
+mod example;
 
 fn demand(cond: bool, label: &str) {
     if !cond {
@@ -13,131 +12,176 @@ fn demand(cond: bool, label: &str) {
     }
 }
 
-fn build_expected() -> Vec<Root> {
-    let mut expected: Vec<Root> = Vec::new();
+fn encode_expected() -> Vec<u8> {
+    use example::write::*;
+
+    let mut expected: Vec<u8> = Vec::new();
 
     // 1) Variant = MyPOD
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"pod-one".to_vec();
-        let pod = MyPOD {
-            a_thing: 10,
-            b_thing: 20,
-        };
-        r.var = MyVariant::Alt0(pod);
-        expected.push(r);
+        let name = b"pod-one";
+
+        write_Root(
+            &mut expected,
+            &Root {
+                name: name,
+                var: MyVariant::MyPOD(&MyPOD {
+                    a_thing: 10,
+                    b_thing: 20,
+                }),
+            },
+        )
+        .unwrap();
     }
 
     // 2) Variant = MyOtherPOD
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"".to_vec();
-        let first = MyPOD {
-            a_thing: 1,
-            b_thing: 0x1122_3344_5566_7788u64,
-        };
-        let second: [u8; 4] = [1, 2, 3, 4];
-        let other = MyOtherPOD { first, second };
-        r.var = MyVariant::Alt1(other);
-        expected.push(r);
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"",
+                var: MyVariant::MyOtherPOD(&MyOtherPOD {
+                    first: MyPOD {
+                        a_thing: 1,
+                        b_thing: 0x1122334455667788,
+                    },
+                    second: [1u8, 2u8, 3u8, 4u8],
+                }),
+            },
+        )
+        .unwrap();
     }
 
     // 3) Variant = void
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"void".to_vec();
-        r.var = MyVariant::Alt2(());
-        expected.push(r);
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"void",
+                var: MyVariant::Void2,
+            },
+        )
+        .unwrap();
     }
 
     // 4) Variant = SmallSeq with floats
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"floats".to_vec();
-        let seq = SmallSeq {
-            list: vec![1.0, 2.5, -3.25, 0.0],
-        };
-        r.var = MyVariant::DefaultAlt(seq); // default alt is tag=3 now
-        expected.push(r);
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"floats",
+                var: MyVariant::SmallSeq(&SmallSeq {
+                    list: &[1.0, 2.5, -3.25, 0.0],
+                }),
+            },
+        )
+        .unwrap();
     }
 
     // 5) Another MyPOD with larger values
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"pod-two".to_vec();
-        let pod = MyPOD {
-            a_thing: 255,
-            b_thing: 0xCAFEBABECAFED00Du64,
-        };
-        r.var = MyVariant::Alt0(pod);
-        expected.push(r);
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"pod-two",
+                var: MyVariant::MyPOD(&MyPOD {
+                    a_thing: 255,
+                    b_thing: 0xCAFEBABECAFED00D,
+                }),
+            },
+        )
+        .unwrap();
     }
 
     // 6) Another SmallSeq, longer
     {
-        let mut r = Root {
-            name: Vec::new(),
-            var: MyVariant::Alt0(MyPOD {
-                a_thing: 0,
-                b_thing: 0,
-            }),
-        };
-        r.name = b"seq-long".to_vec();
-        let mut list = Vec::new();
-        for i in 0..10 {
-            list.push((i as f32) * 0.5);
-        }
-        r.var = MyVariant::DefaultAlt(SmallSeq { list });
-        expected.push(r);
+        let vec: Vec<_> = (0..10).map(|x| (x as f32) * 0.5).collect();
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"seq-long",
+                var: MyVariant::SmallSeq(&SmallSeq { list: &vec }),
+            },
+        )
+        .unwrap();
     }
 
     expected
 }
 
-fn encode_all(msgs: &[Root]) -> io::Result<Vec<u8>> {
-    let mut out: Vec<u8> = Vec::new();
-    for r in msgs {
-        let view = RootView {
-            name: &r.name,
-            var: &r.var,
-        };
-        write_RootView(&mut out, &view)
-            .inspect_err(|x| eprintln!("Unable to write root view {x}"))?;
+fn make_expected() -> Vec<example::read::Root> {
+    use example::read::*;
+
+    let mut expected: Vec<_> = Vec::new();
+
+    // 1) Variant = MyPOD
+    {
+        expected.push(Root {
+            name: b"pod-one".into(),
+            var: MyVariant::MyPOD(MyPOD {
+                a_thing: 10,
+                b_thing: 20,
+            }),
+        });
     }
-    Ok(out)
+
+    // 2) Variant = MyOtherPOD
+    {
+        expected.push(Root {
+            name: b"".into(),
+            var: MyVariant::MyOtherPOD(MyOtherPOD {
+                first: MyPOD {
+                    a_thing: 1,
+                    b_thing: 0x1122334455667788,
+                },
+                second: [1u8, 2u8, 3u8, 4u8],
+            }),
+        });
+    }
+
+    // 3) Variant = void
+    {
+        expected.push(Root {
+            name: b"void".into(),
+            var: MyVariant::Void2,
+        });
+    }
+
+    // 4) Variant = SmallSeq with floats
+    {
+        expected.push(Root {
+            name: b"floats".into(),
+            var: MyVariant::SmallSeq(SmallSeq {
+                list: [1.0, 2.5, -3.25, 0.0].into(),
+            }),
+        });
+    }
+
+    // 5) Another MyPOD with larger values
+    {
+        expected.push(Root {
+            name: b"pod-two".into(),
+            var: MyVariant::MyPOD(MyPOD {
+                a_thing: 255,
+                b_thing: 0xCAFEBABECAFED00D,
+            }),
+        });
+    }
+
+    // 6) Another SmallSeq, longer
+    {
+        let vec: Vec<_> = (0..10).map(|x| (x as f32) * 0.5).collect();
+        expected.push(Root {
+            name: b"seq-long".into(),
+            var: MyVariant::SmallSeq(SmallSeq { list: vec }),
+        });
+    }
+
+    expected
 }
 
-fn decode_all(buf: &[u8], count: usize) -> io::Result<Vec<Root>> {
+fn decode_all(buf: &mut [u8], count: usize) -> io::Result<Vec<example::read::Root>> {
+    use example::read::*;
     println!("Decode all {count}");
     let mut r = Cursor::new(buf);
     let mut out: Vec<Root> = Vec::with_capacity(count);
@@ -151,17 +195,18 @@ fn decode_all(buf: &[u8], count: usize) -> io::Result<Vec<Root>> {
     Ok(out)
 }
 
-fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
+fn compare_expected_actual(expected: &[example::read::Root], actual: &[example::read::Root]) {
+    use example::read::*;
     demand(expected.len() == actual.len(), "size matches");
     for (i, (e, a)) in expected.iter().zip(actual.iter()).enumerate() {
         demand(a.name == e.name, &format!("name matches at {}", i));
         // Compare variant kind
         match (&e.var, &a.var) {
-            (MyVariant::Alt0(ep), MyVariant::Alt0(ap)) => {
+            (MyVariant::MyPOD(ep), MyVariant::MyPOD(ap)) => {
                 demand(ap.a_thing == ep.a_thing, &format!("MyPOD.a_thing at {}", i));
                 demand(ap.b_thing == ep.b_thing, &format!("MyPOD.b_thing at {}", i));
             }
-            (MyVariant::Alt1(eo), MyVariant::Alt1(ao)) => {
+            (MyVariant::MyOtherPOD(eo), MyVariant::MyOtherPOD(ao)) => {
                 demand(
                     ao.first.a_thing == eo.first.a_thing,
                     &format!("MyOtherPOD.first.a_thing at {}", i),
@@ -177,10 +222,10 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
                     );
                 }
             }
-            (MyVariant::Alt2(_), MyVariant::Alt2(_)) => {
+            (MyVariant::Void2, MyVariant::Void2) => {
                 // void payload, nothing to compare
             }
-            (MyVariant::DefaultAlt(es), MyVariant::DefaultAlt(as_)) => {
+            (MyVariant::SmallSeq(es), MyVariant::SmallSeq(as_)) => {
                 demand(
                     as_.list.len() == es.list.len(),
                     &format!("SmallSeq.size at {}", i),
@@ -222,33 +267,30 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let expected = build_expected();
+    let expected = make_expected();
 
     if let Some(path) = read_path {
-        let data = fs::read(&path)?;
+        let mut data = fs::read(&path)?;
         eprintln!("Encoded size {}", data.len());
-        let actual = decode_all(&data, expected.len())?;
+        let actual = decode_all(&mut data, expected.len())?;
         compare_expected_actual(&expected, &actual);
         // Ensure fully consumed
-        let mut r = Cursor::new(&data);
-        for _ in 0..expected.len() {
-            let _ = read_Root(&mut r)?;
-        }
-        demand(r.position() as usize == data.len(), "buffer fully consumed");
+        assert!(data.is_empty(), "buffer fully consumed");
         println!("Verified dump ok ({} messages)", expected.len());
     }
 
     // Local roundtrip
-    let data = encode_all(&expected)?;
 
-    eprintln!("Encoded size {}", data.len());
-    let actual = decode_all(&data, expected.len())?;
-    compare_expected_actual(&expected, &actual);
+    let mut expected_bytes = encode_expected();
+
+    eprintln!("Encoded size {}", expected_bytes.len());
+    let actual = decode_all(&mut expected_bytes, expected.len())?;
+    compare_expected_actual(&make_expected(), &actual);
     println!("All checks passed ({} messages)", expected.len());
 
     if let Some(path) = dump_path {
-        fs::write(&path, &data)?;
-        println!("Wrote {} bytes to {}", data.len(), path.display());
+        fs::write(&path, &expected_bytes)?;
+        println!("Wrote {} bytes to {}", expected_bytes.len(), path.display());
     }
 
     Ok(())

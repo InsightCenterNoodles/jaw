@@ -1,0 +1,1203 @@
+use std::collections::HashMap;
+
+use anyhow::{Result, bail};
+
+use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World};
+
+use super::*;
+
+pub fn emit(world: &World, out: &mut Outfile) -> Result<()> {
+    let ctx = RustContext::new(world)?;
+
+    emit_preamble(out);
+    out.newline();
+
+    emit_module(&ctx, out, RustFlavor::Read)?;
+    out.newline();
+    emit_module(&ctx, out, RustFlavor::Write)?;
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RustFlavor {
+    Read,
+    Write,
+}
+
+impl RustFlavor {
+    fn module_name(self) -> &'static str {
+        match self {
+            RustFlavor::Read => "read",
+            RustFlavor::Write => "write",
+        }
+    }
+}
+
+struct RustContext<'a> {
+    world: &'a World,
+    names: HashMap<TypeID, String>,
+}
+
+impl<'a> RustContext<'a> {
+    fn new(world: &'a World) -> Result<Self> {
+        let mut names = HashMap::new();
+        for (id, ty) in world.iter() {
+            names.insert(id, sanitize(ty.ident.to_string()));
+        }
+        Ok(Self { world, names })
+    }
+
+    fn name_of(&self, id: TypeID) -> String {
+        self.names
+            .get(&id)
+            .expect("missing generated name for type id")
+            .clone()
+    }
+
+    fn types(&'a self) -> impl Iterator<Item = (TypeID, &'a Type)> + 'a {
+        self.world.iter()
+    }
+
+    fn resolve_alias(&self, id: TypeID) -> TypeID {
+        let mut cur = id;
+        loop {
+            let ty = self.world.lookup(cur);
+            match &ty.kind {
+                TypeKind::Alias(a) => cur = a.other,
+                _ => return cur,
+            }
+        }
+    }
+
+    fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
+        let resolved = self.resolve_alias(id);
+        match &self.world.lookup(resolved).kind {
+            TypeKind::Primitive(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    fn underlying_primitive(&self, id: TypeID) -> Option<Primitive> {
+        let ty = self.world.lookup(id);
+        match &ty.kind {
+            TypeKind::Primitive(p) => Some(*p),
+            TypeKind::Alias(a) => self.underlying_primitive(a.other),
+            TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
+            _ => None,
+        }
+    }
+
+    fn is_pod(&self, id: TypeID) -> bool {
+        let ty = self.world.lookup(id);
+        match &ty.kind {
+            TypeKind::Alias(alias) => self.is_pod(alias.other),
+            TypeKind::Pack(_) => true,
+            TypeKind::Enum(_) => true,
+            TypeKind::Bitfld(_) => true,
+            TypeKind::Variant(_) => false,
+            TypeKind::Sequence(_) => false,
+            TypeKind::DynamicArray(_) => false,
+            TypeKind::FixedArray(fixed) => self.is_pod(fixed.value_type),
+            TypeKind::Primitive(_) => true,
+            TypeKind::Void => false,
+        }
+    }
+
+    fn view_needs_lifetime(&self, id: TypeID) -> bool {
+        let resolved = self.resolve_alias(id);
+        let ty = self.world.lookup(resolved);
+        match &ty.kind {
+            TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Enum(_) => false,
+            TypeKind::Bitfld(bitfld) => bitfld
+                .members
+                .iter()
+                .any(|m| self.view_needs_lifetime(m.underlying)),
+            TypeKind::Pack(_) => false,
+            TypeKind::Sequence(seq) => seq.members.iter().any(|m| self.view_needs_lifetime(m.ty)),
+            TypeKind::Variant(variant) => variant
+                .members
+                .iter()
+                .any(|m| self.view_needs_lifetime(m.ty)),
+            TypeKind::DynamicArray(_) => true,
+            TypeKind::FixedArray(_) => true,
+            TypeKind::Alias(alias) => self.view_needs_lifetime(alias.other),
+        }
+    }
+
+    fn rust_type(&self, id: TypeID) -> Result<String> {
+        let resolved = self.resolve_alias(id);
+        let ty = self.world.lookup(resolved);
+        let out = match &ty.kind {
+            TypeKind::Primitive(p) => map_primitive(*p)?.to_string(),
+            TypeKind::Void => "()".into(),
+            _ => self.name_of(resolved),
+        };
+        Ok(out)
+    }
+
+    fn can_bulk_array(&self, id: TypeID) -> Option<&TypeKind> {
+        let ty = self.world.lookup(id);
+
+        match &ty.kind {
+            TypeKind::DynamicArray(dynamic_array) if self.is_pod(dynamic_array.value_type) => {
+                Some(&self.world.lookup(dynamic_array.value_type).kind)
+            }
+            TypeKind::FixedArray(fixed_array) if self.is_pod(fixed_array.value_type) => {
+                Some(&self.world.lookup(fixed_array.value_type).kind)
+            }
+            _ => None,
+        }
+    }
+
+    fn rust_view_type(&self, id: TypeID, lifetime: &str) -> Result<String> {
+        let resolved = self.resolve_alias(id);
+        let ty = self.world.lookup(resolved);
+        let name = self.name_of(resolved);
+        let needs_lt = self.view_needs_lifetime(resolved);
+        let lt_suffix = if needs_lt {
+            format!("<{lifetime}>")
+        } else {
+            String::new()
+        };
+
+        let out = match &ty.kind {
+            TypeKind::Primitive(p) => map_primitive(*p)?.to_string(),
+            TypeKind::Void => "()".into(),
+            TypeKind::Enum(_) => name,
+            TypeKind::Bitfld(_)
+            | TypeKind::Pack(_)
+            | TypeKind::Sequence(_)
+            | TypeKind::Variant(_) => {
+                format!("{name}{lt_suffix}")
+            }
+            TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
+                format!("{name}View<{lifetime}>")
+            }
+            TypeKind::Alias(_) => unreachable!("aliases resolved earlier"),
+        };
+        Ok(out)
+    }
+
+    fn rust_view_underlying(&self, id: TypeID, lifetime: &str) -> Result<String> {
+        let resolved = self.resolve_alias(id);
+        let ty = self.world.lookup(resolved);
+        let name = self.name_of(resolved);
+        let needs_lt = self.view_needs_lifetime(resolved);
+        let lt_suffix = if needs_lt {
+            format!("<{lifetime}>")
+        } else {
+            String::new()
+        };
+
+        let out = match &ty.kind {
+            TypeKind::Primitive(p) => map_primitive(*p)?.to_string(),
+            TypeKind::Void => "()".into(),
+            TypeKind::Enum(_) => name,
+            TypeKind::Bitfld(_)
+            | TypeKind::Pack(_)
+            | TypeKind::Sequence(_)
+            | TypeKind::Variant(_) => {
+                format!("{name}{lt_suffix}")
+            }
+            TypeKind::DynamicArray(arr) => {
+                let elem = self.rust_view_type(arr.value_type, lifetime)?;
+                format!("&{lifetime} [{elem}]")
+            }
+            TypeKind::FixedArray(arr) => {
+                let elem = self.rust_view_type(arr.value_type, lifetime)?;
+                format!("&{lifetime} [{elem}]")
+            }
+            TypeKind::Alias(_) => unreachable!("aliases resolved earlier"),
+        };
+        Ok(out)
+    }
+}
+
+fn emit_preamble(out: &mut impl Sink) {
+    out.wln("// Generated by jaw. Do not edit.");
+    out.wln("use std::io::{self, Read, Write};");
+    out.wln("use std::convert::TryInto;");
+
+    out.newline();
+
+    out.wln("fn invalid_data(msg: impl Into<String>) -> io::Error");
+    {
+        let mut idt = out.indent();
+        idt.wln("io::Error::new(io::ErrorKind::InvalidData, msg.into())");
+    }
+    out.newline();
+
+    for (fname, ty) in [
+        ("read_u8", "u8"),
+        ("read_i8", "i8"),
+        ("read_u16", "u16"),
+        ("read_i16", "i16"),
+        ("read_u32", "u32"),
+        ("read_i32", "i32"),
+        ("read_u64", "u64"),
+        ("read_i64", "i64"),
+        ("read_f32", "f32"),
+        ("read_f64", "f64"),
+    ] {
+        out.wln(&format!(
+            "fn {fname}<R: Read>(reader: &mut R) -> io::Result<{ty}>"
+        ));
+        {
+            let mut idt = out.indent();
+            idt.wln(&format!(
+                "let mut buf = [0u8; std::mem::size_of::<{ty}>()];"
+            ));
+            idt.wln("reader.read_exact(&mut buf)?;");
+            idt.wln(&format!("Ok({ty}::from_le_bytes(buf))"));
+        }
+    }
+    out.newline();
+
+    for (fname, ty) in [
+        ("write_u8", "u8"),
+        ("write_i8", "i8"),
+        ("write_u16", "u16"),
+        ("write_i16", "i16"),
+        ("write_u32", "u32"),
+        ("write_i32", "i32"),
+        ("write_u64", "u64"),
+        ("write_i64", "i64"),
+        ("write_f32", "f32"),
+        ("write_f64", "f64"),
+    ] {
+        out.wln(&format!(
+            "fn {fname}<W: Write>(writer: &mut W, value: {ty}) -> io::Result<()>"
+        ));
+        {
+            let mut idt = out.indent();
+            idt.wln("writer.write_all(&value.to_le_bytes())");
+        }
+    }
+    out.newline();
+}
+
+fn emit_module(ctx: &RustContext, out: &mut impl Sink, flavor: RustFlavor) -> Result<()> {
+    out.wln(&format!("pub mod {}", flavor.module_name()));
+    {
+        let mut module = out.indent();
+        module.wln("use super::*;");
+        module.newline();
+
+        for (id, ty) in ctx.types() {
+            match flavor {
+                RustFlavor::Read => emit_read_type_definition(ctx, &mut module, id, ty)?,
+                RustFlavor::Write => emit_write_type_definition(ctx, &mut module, id, ty)?,
+            }
+        }
+
+        for (id, ty) in ctx.types() {
+            match flavor {
+                RustFlavor::Read => emit_read_impl(ctx, &mut module, id, ty)?,
+                RustFlavor::Write => emit_write_impl(ctx, &mut module, id, ty)?,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_read_type_definition(
+    ctx: &RustContext,
+    out: &mut impl Sink,
+    id: TypeID,
+    ty: &Type,
+) -> Result<()> {
+    let name = ctx.name_of(id);
+    match &ty.kind {
+        TypeKind::Alias(alias) => {
+            let target_ty = ctx.rust_type(alias.other)?;
+            out.wln(&format!("pub type {name} = {target_ty};"));
+            out.newline();
+        }
+        TypeKind::Enum(enm) => {
+            let base = ctx.rust_type(enm.underlying)?;
+            out.wln(&format!("#[repr({base})]"));
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+            out.wln(&format!("pub enum {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &enm.members {
+                    idt.wln(&format!("{} = {},", sanitize(&m.name), m.value));
+                }
+                if let Some(default) = &enm.default {
+                    idt.wln(&format!("{} = {},", sanitize(&default.name), default.value));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Bitfld(bitfld) => {
+            out.wln("#[derive(Debug, Clone, PartialEq)]");
+            out.wln(&format!("pub struct {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &bitfld.members {
+                    let field_ty = ctx.rust_type(m.underlying)?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Pack(pack) => {
+            out.wln("#[repr(C, packed(1))]");
+            out.wln(&format!("pub struct {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &pack.members {
+                    let field_ty = ctx.rust_type(m.ty)?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+
+            out.wln(&format!("impl std::fmt::Debug for {name}"));
+            {
+                let mut idt = out.indent();
+                idt.wln("fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result");
+                {
+                    let mut idt = idt.indent();
+
+                    for item in &pack.members {
+                        idt.wln(&format!("let {0} = self.{0};", item.name));
+                    }
+
+                    idt.wln(&format!("f.debug_struct(\"{name}\")"));
+
+                    for item in &pack.members {
+                        idt.wln(&format!(".field(\"{0}\", &{0})", item.name));
+                    }
+
+                    idt.wln(".finish()");
+                }
+            }
+
+            out.wln(&format!("impl Clone for {name}"));
+            {
+                let mut idt = out.indent();
+                idt.wln("fn clone(&self) -> Self");
+                {
+                    let mut idt = idt.indent();
+
+                    idt.wln(&format!("Self"));
+                    {
+                        let mut idt = idt.indent();
+                        for item in &pack.members {
+                            idt.wln(&format!("{0}: self.{0},", item.name));
+                        }
+                    }
+                }
+            }
+
+            out.wln(&format!("impl PartialEq for {name}"));
+            {
+                let mut idt = out.indent();
+                idt.wln("fn eq(&self, other: &Self) -> bool");
+                {
+                    let mut idt = idt.indent();
+
+                    let mut mem_check = vec![];
+
+                    for item in &pack.members {
+                        mem_check.push(format!("self.{0} == other.{0}", item.name));
+                    }
+
+                    idt.wln(&(String::from("return ") + &mem_check.join("&&")));
+                }
+            }
+
+            out.wln(&format!("impl Copy for {name} {{ }}"));
+
+            out.wln(&format!("unsafe impl bytemuck::Zeroable for {name} {{ }}"));
+            out.wln(&format!("unsafe impl bytemuck::Pod for {name} {{ }}"));
+
+            out.newline();
+        }
+        TypeKind::Sequence(seq) => {
+            out.wln("#[derive(Debug, Clone, PartialEq)]");
+            out.wln(&format!("pub struct {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &seq.members {
+                    let field_ty = ctx.rust_type(m.ty)?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Variant(variant) => {
+            out.wln("#[derive(Debug, Clone, PartialEq)]");
+            out.wln(&format!("pub enum {name}"));
+            {
+                let mut idt = out.indent();
+                for (idx, m) in variant.members.iter().enumerate() {
+                    let mty = if matches!(
+                        ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                        TypeKind::Void
+                    ) {
+                        "()".to_string()
+                    } else {
+                        ctx.rust_type(m.ty)?
+                    };
+                    if mty == "()" {
+                        idt.wln(&format!("Void{idx},"));
+                    } else {
+                        idt.wln(&format!("{mty}({mty}),"));
+                    }
+                }
+            }
+            out.newline();
+        }
+        TypeKind::DynamicArray(arr) => {
+            let elem = ctx.rust_type(arr.value_type)?;
+            out.wln(&format!("pub type {name} = Vec<{elem}>;"));
+            out.newline();
+        }
+        TypeKind::FixedArray(arr) => {
+            let elem = ctx.rust_type(arr.value_type)?;
+            out.wln(&format!("pub type {name} = [{elem}; {}];", arr.count));
+            out.newline();
+        }
+        TypeKind::Primitive(_) | TypeKind::Void => {}
+    }
+
+    Ok(())
+}
+
+fn emit_write_type_definition(
+    ctx: &RustContext,
+    out: &mut impl Sink,
+    id: TypeID,
+    ty: &Type,
+) -> Result<()> {
+    let name = ctx.name_of(id);
+    match &ty.kind {
+        TypeKind::Alias(alias) => {
+            let target_ty = ctx.rust_view_underlying(alias.other, "'a")?;
+            let needs_lt = ctx.view_needs_lifetime(alias.other);
+            if needs_lt {
+                out.wln("#[allow(unused_lifetimes)]");
+                out.wln(&format!("pub type {name}<'a> = {target_ty};"));
+            } else {
+                out.wln(&format!("pub type {name} = {target_ty};"));
+            }
+            out.newline();
+        }
+        TypeKind::Enum(enm) => {
+            let base = ctx.rust_type(enm.underlying)?;
+            out.wln(&format!("#[repr({base})]"));
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+            out.wln(&format!("pub enum {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &enm.members {
+                    idt.wln(&format!("{} = {},", sanitize(&m.name), m.value));
+                }
+                if let Some(default) = &enm.default {
+                    idt.wln(&format!("{} = {},", sanitize(&default.name), default.value));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Bitfld(bitfld) => {
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
+            out.wln(&format!("pub struct {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &bitfld.members {
+                    let field_ty = ctx.rust_type(m.underlying)?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Pack(pack) => {
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
+            out.wln("#[repr(C, packed(1))]");
+            out.wln(&format!("pub struct {name}"));
+            {
+                let mut idt = out.indent();
+                for m in &pack.members {
+                    let field_ty = ctx.rust_type(m.ty)?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+            out.wln(&format!("unsafe impl bytemuck::Zeroable for {name} {{ }}"));
+            out.wln(&format!("unsafe impl bytemuck::Pod for {name} {{ }}"));
+            out.newline();
+        }
+        TypeKind::Sequence(seq) => {
+            let needs_lt = ctx.view_needs_lifetime(id);
+            let lt = if needs_lt { "<'a>" } else { "" };
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
+            out.wln(&format!("pub struct {name}{lt}"));
+            {
+                let mut idt = out.indent();
+                for m in &seq.members {
+                    let field_ty = ctx.rust_view_type(m.ty, "'a")?;
+                    idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Variant(variant) => {
+            let needs_lt = ctx.view_needs_lifetime(id);
+            let lt = if needs_lt { "<'a>" } else { "" };
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
+            out.wln(&format!("pub enum {name}{lt}"));
+            {
+                let mut idt = out.indent();
+                for (idx, m) in variant.members.iter().enumerate() {
+                    let mty = if matches!(
+                        ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                        TypeKind::Void
+                    ) {
+                        "()".to_string()
+                    } else {
+                        ctx.rust_view_type(m.ty, "'a")?
+                    };
+                    if mty == "()" {
+                        idt.wln(&format!("Void{idx},"));
+                    } else {
+                        let mut vname = mty.as_str();
+                        if let Some(x) = mty.find("<") {
+                            vname = mty.split_at(x).0;
+                        }
+                        idt.wln(&format!("{vname}(&'a {mty}),"));
+                    }
+                }
+            }
+            out.newline();
+        }
+        TypeKind::DynamicArray(arr) => {
+            let elem_view = ctx.rust_view_type(arr.value_type, "'a")?;
+            out.wln(&format!("pub type {name}View<'a> = &'a [{elem_view}];"));
+            out.newline();
+        }
+        TypeKind::FixedArray(arr) => {
+            let elem_view = ctx.rust_type(arr.value_type)?;
+            out.wln(&format!("pub type {name} = [{elem_view}; {}];", arr.count));
+            let elem_view = ctx.rust_view_type(arr.value_type, "'a")?;
+            out.wln(&format!("pub type {name}View<'a> = &'a [{elem_view}];"));
+            out.newline();
+        }
+        TypeKind::Primitive(_) | TypeKind::Void => {}
+    }
+
+    Ok(())
+}
+
+fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
+    let name = ctx.name_of(id);
+    match &ty.kind {
+        TypeKind::Primitive(_) => {}
+        TypeKind::Void => {}
+        TypeKind::Alias(alias) => {
+            let target_ty = ctx.rust_type(alias.other)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{target_ty}>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!(
+                    "read_{}(reader)",
+                    ctx.name_of(ctx.resolve_alias(alias.other))
+                ));
+            }
+            out.newline();
+        }
+        TypeKind::Enum(enm) => {
+            let base_read = read_primitive_method(ctx, enm.underlying)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{name}>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("let raw = {base_read}(reader)?;"));
+                idt.wln("match raw");
+                {
+                    let mut mtch = idt.indent();
+                    for m in &enm.members {
+                        mtch.wln(&format!(
+                            "{} => Ok({}::{}),",
+                            m.value,
+                            name,
+                            sanitize(&m.name)
+                        ));
+                    }
+                    if let Some(default) = &enm.default {
+                        mtch.wln(&format!("_ => Ok({}::{}),", name, sanitize(&default.name)));
+                    } else {
+                        mtch.wln(&format!(
+                            "_ => Err(invalid_data(format!(\"invalid discriminant for {name}: {{raw}}\"))),"
+                        ));
+                    }
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Bitfld(bitfld) => {
+            let base_read = read_primitive_method(ctx, bitfld.underlying)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{name}>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("let raw = {base_read}(reader)? as u128;"));
+                for m in &bitfld.members {
+                    let start = m.range.start();
+                    let end = m.range.end();
+                    let width = end - start + 1;
+                    let mask = (1u128 << width) - 1;
+                    let field = sanitize(&m.name);
+                    let field_ty = ctx.world.lookup(m.underlying);
+                    let assign_expr = match &field_ty.kind {
+                        TypeKind::Enum(enm) => {
+                            let mut s = String::new();
+                            s.push_str(&format!(
+                                "let {field}_raw = ((raw >> {start}) & 0x{mask:X}) as {};\n",
+                                ctx.rust_type(enm.underlying)?
+                            ));
+                            s.push_str("let ");
+                            s.push_str(&field);
+                            s.push_str(" = match ");
+                            s.push_str(&format!("{field}_raw"));
+                            s.push_str(" {\n");
+                            for mem in &enm.members {
+                                s.push_str(&format!(
+                                    "    {val} => {enm_name}::{variant},\n",
+                                    val = mem.value,
+                                    enm_name = ctx.name_of(m.underlying),
+                                    variant = sanitize(&mem.name)
+                                ));
+                            }
+                            if let Some(default) = &enm.default {
+                                s.push_str(&format!(
+                                    "    _ => {enm_name}::{variant},\n",
+                                    enm_name = ctx.name_of(m.underlying),
+                                    variant = sanitize(&default.name)
+                                ));
+                            } else {
+                                s.push_str(
+                                    "    _ => return Err(invalid_data(\"invalid discriminant in bitfield\")),\n",
+                                );
+                            }
+                            s.push_str("};");
+                            s
+                        }
+                        _ => format!(
+                            "let {field} = (((raw >> {start}) & 0x{mask:X}) as {}) as {};",
+                            ctx.rust_type(m.underlying)?,
+                            ctx.rust_type(m.underlying)?
+                        ),
+                    };
+                    for line in assign_expr.lines() {
+                        idt.wln(line);
+                    }
+                }
+                idt.wln(&format!("Ok({name}"));
+                {
+                    let mut args = idt.indent();
+                    for m in &bitfld.members {
+                        let field = sanitize(&m.name);
+                        args.wln(&format!("{field},"));
+                    }
+                }
+                idt.wln(")");
+            }
+            out.newline();
+        }
+        TypeKind::Pack(_) => {
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{name}>"
+            ));
+            {
+                let mut idt = out.indent();
+
+                idt.wln("// Safety: Bytes will be overwritten anyway");
+                idt.wln("#[allow(invalid_value)]");
+                idt.wln("let mut tmp = unsafe { std::mem::MaybeUninit::uninit().assume_init() };");
+                idt.wln("reader.read_exact(bytemuck::bytes_of_mut(&mut tmp))?;");
+                idt.wln("Ok(tmp)");
+            }
+            out.newline();
+        }
+        TypeKind::Sequence(seq) => {
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{name}>"
+            ));
+            {
+                let mut idt = out.indent();
+                for m in &seq.members {
+                    let expr = read_expr(ctx, m.ty, "reader")?;
+                    idt.wln(&format!(
+                        "let {} = {expr}?;",
+                        sanitize(&m.name),
+                        expr = expr
+                    ));
+                }
+                idt.wln(&format!("Ok({name}"));
+                {
+                    let mut body = idt.indent();
+                    for m in &seq.members {
+                        let f = sanitize(&m.name);
+                        body.wln(&format!("{f},"));
+                    }
+                }
+                idt.wln(")");
+            }
+            out.newline();
+        }
+        TypeKind::Variant(variant) => {
+            let disc_read = read_primitive_method(ctx, variant.discriminant)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{name}>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("let tag = {disc_read}(reader)?;"));
+                idt.wln("match tag");
+                {
+                    let mut mtch = idt.indent();
+                    for (idx, m) in variant.members.iter().enumerate() {
+                        mtch.wln(&format!("{} => ", m.value));
+                        {
+                            let mut body = mtch.indent();
+
+                            let mty = if matches!(
+                                ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                                TypeKind::Void
+                            ) {
+                                "()".to_string()
+                            } else {
+                                ctx.rust_type(m.ty)?
+                            };
+
+                            if mty == "()" {
+                                body.wln(&format!("Ok({name}::Void{idx})"));
+                            } else {
+                                let mut vname = mty.as_str();
+                                if let Some(x) = mty.find("<") {
+                                    vname = mty.split_at(x).0;
+                                }
+
+                                let expr = read_expr(ctx, m.ty, "reader")?;
+                                body.wln(&format!("let payload = {expr}?;"));
+                                body.wln(&format!("Ok({name}::{vname}(payload))"));
+                            }
+                        }
+                        mtch.wln(",");
+                    }
+                    mtch.wln(&format!(
+                        "_ => Err(invalid_data(format!(\"unknown tag for {name}: {{tag}}\"))),"
+                    ));
+                }
+            }
+            out.newline();
+        }
+        TypeKind::DynamicArray(arr) => {
+            let elem_name = ctx.rust_type(arr.value_type)?;
+            let size_read = read_primitive_method(ctx, arr.size_type)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<Vec<{elem_name}>>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("let count_raw = {size_read}(reader)?;"));
+                idt.wln("let count: usize = count_raw.try_into().map_err(|_| invalid_data(\"array length too large\"))?;");
+
+                match ctx.can_bulk_array(id) {
+                    Some(TypeKind::Primitive(x)) if x.is_u8() => {
+                        idt.wln("let mut out = vec![Default::default(); count];");
+                        idt.wln("reader.read_exact(&mut out)?;");
+                    }
+                    Some(_) => {
+                        idt.wln("let mut out = vec![Default::default(); count];");
+                        idt.wln("reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;");
+                    }
+                    _ => {
+                        idt.wln("let mut out = Vec::with_capacity(count);");
+                        idt.wln("for _ in 0..count");
+                        {
+                            let mut body = idt.indent();
+                            let expr = read_expr(ctx, arr.value_type, "reader")?;
+                            body.wln(&format!("out.push({expr}?);"));
+                        }
+                    }
+                }
+                idt.wln("Ok(out)");
+            }
+            out.newline();
+        }
+        TypeKind::FixedArray(arr) => {
+            let elem_name = ctx.rust_type(arr.value_type)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<[{}; {}]>",
+                elem_name, arr.count
+            ));
+
+            {
+                let mut idt = out.indent();
+
+                idt.wln(&format!(
+                    "let mut out : [{}; {}] = Default::default();",
+                    elem_name, arr.count
+                ));
+
+                match ctx.can_bulk_array(id) {
+                    Some(TypeKind::Primitive(x)) if x.is_u8() => {
+                        idt.wln("reader.read_exact(&mut out)?;");
+                    }
+                    Some(_) => {
+                        idt.wln("reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;");
+                    }
+                    _ => {
+                        idt.wln("for x in &mut out");
+                        {
+                            let mut body = idt.indent();
+                            let expr = read_expr(ctx, arr.value_type, "reader")?;
+                            body.wln(&format!("*x = {expr}?;"));
+                        }
+                    }
+                }
+
+                idt.wln("Ok(out)");
+            }
+
+            out.newline();
+        }
+    }
+
+    Ok(())
+}
+
+fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
+    let name = ctx.name_of(id);
+    match &ty.kind {
+        TypeKind::Primitive(_) => {}
+        TypeKind::Void => {}
+        TypeKind::Alias(alias) => {
+            let target_view = ctx.rust_view_type(alias.other, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{target_view}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                let target_name = ctx.name_of(ctx.resolve_alias(alias.other));
+                idt.wln(&format!("write_{target_name}(writer, value)"));
+            }
+            out.newline();
+        }
+        TypeKind::Enum(enm) => {
+            let write_fn = write_primitive_method(ctx, enm.underlying)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{name}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("{}(writer, *value as _)", write_fn));
+            }
+            out.newline();
+        }
+        TypeKind::Bitfld(bitfld) => {
+            let write_fn = write_primitive_method(ctx, bitfld.underlying)?;
+            let view_ty = ctx.rust_view_type(id, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{view_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln("let mut raw: u128 = 0;");
+                for m in &bitfld.members {
+                    let start = m.range.start();
+                    let end = m.range.end();
+                    let width = end - start + 1;
+                    let mask = (1u128 << width) - 1;
+                    let fname = sanitize(&m.name);
+                    idt.wln(&format!(
+                        "raw |= ((value.{fname} as u128) & 0x{mask:X}) << {start};"
+                    ));
+                }
+                idt.wln(&format!(
+                    "{}(writer, raw as {})",
+                    write_fn,
+                    ctx.rust_type(bitfld.underlying)?
+                ));
+            }
+            out.newline();
+        }
+        TypeKind::Pack(_) => {
+            let view_ty = ctx.rust_view_type(id, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{view_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln("writer.write_all(bytemuck::bytes_of(value))");
+            }
+            out.newline();
+        }
+        TypeKind::Sequence(seq) => {
+            let view_ty = ctx.rust_view_type(id, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{view_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                for m in &seq.members {
+                    write_value(
+                        ctx,
+                        &mut idt,
+                        m.ty,
+                        &format!("&value.{}", sanitize(&m.name)),
+                    )?;
+                }
+                idt.wln("Ok(())");
+            }
+            out.newline();
+        }
+        TypeKind::Variant(variant) => {
+            let write_tag = write_primitive_method(ctx, variant.discriminant)?;
+            let view_ty = ctx.rust_view_type(id, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, value: &{view_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln("match value");
+                {
+                    let mut mtch = idt.indent();
+                    for (idx, m) in variant.members.iter().enumerate() {
+                        let mty = if matches!(
+                            ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                            TypeKind::Void
+                        ) {
+                            "()".to_string()
+                        } else {
+                            ctx.rust_view_type(m.ty, "'a")?
+                        };
+
+                        let mut vname = mty.as_str();
+                        if let Some(x) = mty.find("<") {
+                            vname = mty.split_at(x).0;
+                        }
+
+                        if matches!(
+                            ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                            TypeKind::Void
+                        ) {
+                            mtch.wln(&format!("{name}::Void{idx} =>"));
+                            {
+                                let mut body = mtch.indent();
+                                body.wln(&format!("{}(writer, {})?;", write_tag, m.value));
+                                body.wln("Ok(())");
+                            }
+                            mtch.wln(",");
+                        } else {
+                            mtch.wln(&format!("{name}::{vname}(inner) =>"));
+                            {
+                                let mut body = mtch.indent();
+                                body.wln(&format!("{}(writer, {})?;", write_tag, m.value));
+                                write_value(ctx, &mut body, m.ty, "inner")?;
+                                body.wln("Ok(())");
+                            }
+                            mtch.wln(",");
+                        }
+                    }
+                }
+            }
+            out.newline();
+        }
+        TypeKind::DynamicArray(arr) => {
+            let values_ty = ctx.rust_view_type(id, "'_")?;
+            let size_write = write_primitive_method(ctx, arr.size_type)?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, values: &{values_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln("let len = values.len();");
+                idt.wln("let count: u64 = len.try_into().map_err(|_| invalid_data(\"array length too large to encode\"))?;");
+                idt.wln(&format!("{}(writer, count as _)?;", size_write));
+                if ctx.direct_primitive(arr.value_type).is_some() {
+                    idt.wln("writer.write_all(bytemuck::cast_slice(values))?;");
+                } else {
+                    idt.wln("for v in *values");
+                    {
+                        let mut body = idt.indent();
+                        write_value(ctx, &mut body, arr.value_type, "v")?;
+                    }
+                }
+                idt.wln("Ok(())");
+            }
+            out.newline();
+        }
+        TypeKind::FixedArray(arr) => {
+            let values_ty = ctx.rust_view_type(id, "'_")?;
+            out.wln("#[allow(non_snake_case)]");
+            out.wln(&format!(
+                "pub fn write_{name}<W: Write>(writer: &mut W, values: &{values_ty}) -> io::Result<()>"
+            ));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!(
+                    "if values.len() != {} {{ return Err(invalid_data(\"unexpected fixed array length\")); }}",
+                    arr.count
+                ));
+                if ctx.direct_primitive(arr.value_type).is_some() {
+                    idt.wln("writer.write_all(bytemuck::cast_slice(values))?;");
+                } else {
+                    idt.wln("for v in *values");
+                    {
+                        let mut body = idt.indent();
+                        write_value(ctx, &mut body, arr.value_type, "v")?;
+                    }
+                }
+                idt.wln("Ok(())");
+            }
+            out.newline();
+        }
+    }
+
+    Ok(())
+}
+
+fn read_expr(ctx: &RustContext, id: TypeID, reader_ident: &str) -> Result<String> {
+    let ty = ctx.world.lookup(ctx.resolve_alias(id));
+    let expr = match &ty.kind {
+        TypeKind::Primitive(p) => {
+            let method = read_primitive_method_direct(*p)?;
+            format!("{method}({reader_ident})")
+        }
+        TypeKind::Void => "Ok(())".into(),
+        TypeKind::Alias(alias) => return read_expr(ctx, alias.other, reader_ident),
+        _ => format!("read_{}({reader_ident})", ctx.name_of(id)),
+    };
+    Ok(expr)
+}
+
+fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &str) -> Result<()> {
+    let ty = ctx.world.lookup(ctx.resolve_alias(id));
+    match &ty.kind {
+        TypeKind::Primitive(p) => {
+            let method = write_primitive_method_direct(*p)?;
+            out.wln(&format!("{method}(writer, {value_expr})?;"));
+        }
+        TypeKind::Void => {}
+        TypeKind::Alias(alias) => write_value(ctx, out, alias.other, value_expr)?,
+        TypeKind::Enum(enm) => {
+            let method = write_primitive_method(ctx, enm.underlying)?;
+            out.wln(&format!("{method}(writer, {value_expr} as _)?;"));
+        }
+        TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
+            out.wln(&format!(
+                "write_{}(writer, {value_expr})?;",
+                ctx.name_of(id)
+            ));
+        }
+        _ => {
+            out.wln(&format!(
+                "write_{}(writer, {value_expr})?;",
+                ctx.name_of(id)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn read_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> {
+    let p = ctx
+        .underlying_primitive(id)
+        .ok_or_else(|| anyhow::anyhow!("expected primitive-compatible type"))?;
+    read_primitive_method_direct(p)
+}
+
+fn write_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> {
+    let p = ctx
+        .underlying_primitive(id)
+        .ok_or_else(|| anyhow::anyhow!("expected primitive-compatible type"))?;
+    write_primitive_method_direct(p)
+}
+
+fn read_primitive_method_direct(p: Primitive) -> Result<&'static str> {
+    match (p.dtype, p.sign, p.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok("read_u8"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => Ok("read_u16"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => Ok("read_u32"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => Ok("read_u64"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W8) => Ok("read_i8"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W16) => Ok("read_i16"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W32) => Ok("read_i32"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W64) => Ok("read_i64"),
+        (Datatype::Float, _, BitWidth::W32) => Ok("read_f32"),
+        (Datatype::Float, _, BitWidth::W64) => Ok("read_f64"),
+        _ => bail!("unsupported primitive type"),
+    }
+}
+
+fn write_primitive_method_direct(p: Primitive) -> Result<&'static str> {
+    match (p.dtype, p.sign, p.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok("write_u8"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => Ok("write_u16"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => Ok("write_u32"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => Ok("write_u64"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W8) => Ok("write_i8"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W16) => Ok("write_i16"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W32) => Ok("write_i32"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W64) => Ok("write_i64"),
+        (Datatype::Float, _, BitWidth::W32) => Ok("write_f32"),
+        (Datatype::Float, _, BitWidth::W64) => Ok("write_f64"),
+        _ => bail!("unsupported primitive type"),
+    }
+}
+
+fn map_primitive(p: Primitive) -> Result<&'static str> {
+    let s = match (p.dtype, p.sign, p.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => "u8",
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => "u16",
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => "u32",
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => "u64",
+        (Datatype::Integer, Signedness::Signed, BitWidth::W8) => "i8",
+        (Datatype::Integer, Signedness::Signed, BitWidth::W16) => "i16",
+        (Datatype::Integer, Signedness::Signed, BitWidth::W32) => "i32",
+        (Datatype::Integer, Signedness::Signed, BitWidth::W64) => "i64",
+        (Datatype::Float, _, BitWidth::W32) => "f32",
+        (Datatype::Float, _, BitWidth::W64) => "f64",
+        _ => bail!("unsupported primitive type"),
+    };
+    Ok(s)
+}
+
+fn sanitize<S: AsRef<str>>(s: S) -> String {
+    let raw = s.as_ref();
+    let mut out = String::with_capacity(raw.len());
+    for (i, ch) in raw.chars().enumerate() {
+        let valid = ch.is_ascii_alphanumeric() || ch == '_';
+        if !valid {
+            out.push('_');
+            continue;
+        }
+        if i == 0 && ch.is_ascii_digit() {
+            out.push('_');
+        }
+        out.push(ch);
+    }
+    if out.is_empty() { "_t".into() } else { out }
+}

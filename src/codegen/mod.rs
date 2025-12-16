@@ -1,5 +1,6 @@
 mod cpp;
 mod python;
+mod rust;
 
 use std::{fmt::Display, io::Write, path::Path};
 
@@ -162,6 +163,13 @@ pub fn emit_python(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> 
     let mut out = open_outfile(path, "", "")?;
     python::emit(world, &mut out)
         .with_context(|| format!("while generating Python into {}", path.display()))
+}
+
+pub fn emit_rust(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut out = open_outfile(path, "{", "}")?;
+    rust::emit(world, &mut out)
+        .with_context(|| format!("while generating Rust into {}", path.display()))
 }
 
 trait Sink {

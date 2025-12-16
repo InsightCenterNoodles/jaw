@@ -134,6 +134,13 @@ impl Primitive {
         }
     }
 
+    pub fn is_u8(&self) -> bool {
+        matches!(
+            (self.width, self.sign, self.dtype),
+            (BitWidth::W8, Signedness::Unsigned, Datatype::Integer)
+        )
+    }
+
     fn verify_can_fit(&self, v: i128) -> anyhow::Result<()> {
         let Datatype::Integer = self.dtype else {
             bail!("integer cannot fit in a float")

@@ -46,7 +46,7 @@ fn process() -> anyhow::Result<()> {
     match args.kind {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, args.output)?,
         GeneratorKind::Python => codegen::emit_python(&world, args.output)?,
-        GeneratorKind::Rust => bail!("Rust generator not implemented yet"),
+        GeneratorKind::Rust => codegen::emit_rust(&world, args.output)?,
     }
 
     Ok(())
