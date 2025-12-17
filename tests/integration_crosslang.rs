@@ -65,7 +65,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     fs::create_dir_all(&python_dir)?;
     codegen::emit_python(world, python_dir.join("example.py"))?;
     copy_file(
-        repo_root().join("generated/python/driver.py"),
+        repo_root().join("assets/generated/python/driver.py"),
         python_dir.join("driver.py"),
     )?;
 
@@ -75,15 +75,15 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     fs::create_dir_all(&cpp_src)?;
     codegen::emit_cpp(world, cpp_src.join("example.hpp"))?;
     copy_file(
-        repo_root().join("generated/cpp/src/codec.hpp"),
+        repo_root().join("assets/generated/cpp/src/codec.hpp"),
         cpp_src.join("codec.hpp"),
     )?;
     copy_file(
-        repo_root().join("generated/cpp/src/main.cpp"),
+        repo_root().join("assets/generated/cpp/src/main.cpp"),
         cpp_src.join("main.cpp"),
     )?;
     copy_file(
-        repo_root().join("generated/cpp/CMakeLists.txt"),
+        repo_root().join("assets/generated/cpp/CMakeLists.txt"),
         cpp_src_dir.join("CMakeLists.txt"),
     )?;
     let cpp_build_dir = out_root.join("cpp_build");
@@ -93,15 +93,15 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     let rust_src = rust_dir.join("src");
     fs::create_dir_all(&rust_src)?;
     copy_file(
-        repo_root().join("generated/rust/Cargo.toml"),
+        repo_root().join("assets/generated/rust/Cargo.toml"),
         rust_dir.join("Cargo.toml"),
     )?;
-    let lock = repo_root().join("generated/rust/Cargo.lock");
+    let lock = repo_root().join("assets/generated/rust/Cargo.lock");
     if lock.exists() {
         copy_file(&lock, rust_dir.join("Cargo.lock"))?;
     }
     copy_file(
-        repo_root().join("generated/rust/src/main.rs"),
+        repo_root().join("assets/generated/rust/src/main.rs"),
         rust_src.join("main.rs"),
     )?;
     codegen::emit_rust(world, rust_src.join("example.rs"))?;

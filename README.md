@@ -1,26 +1,19 @@
 # jaw
-A binary protocol code generator
-
-Overview
-- Parse a small DSL (`.jaw`) that describes binary message layouts
-- Validate and compile into an intermediate type graph
-- Generate reader/writer code for C++, Python, or Rust
-- Endianess is assumed to be little
+A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, Python and Rust.
 
 Quickstart
-- Build: `cargo build` (Rust 2024 edition)
+- Build: `cargo build`
 - Run: `cargo run -- <INPUT.jaw> --kind <cpp|python|rust> <OUTPUT>`
   - Example (Python): `cargo run -- assets/basic.jaw --kind python generated/python/basic.py`
   - Example (C++): `cargo run -- assets/basic.jaw --kind cpp generated/cpp/src/basic.hpp`
   - Example (Rust): `cargo run -- assets/basic.jaw --kind rust generated/rust/basic.rs`
 
-CLI
-- `--kind`: selects output generator. Supported: `cpp`, `python`, `rust`.
-- Exit codes: non-zero on parse/validation/generation errors. Errors display spans using ariadne with helpful labels.
-
 DSL Summary
+
+An example of capabilities is provided in `assets/example.jaw`
+
 - Primitives: `u8,u16,u32,u64,i8,i16,i32,i64,f32,f64`
-- Pack (POD struct):
+- Pack (POD, packed, struct):
   - `pack Name` then members as `- field : Type`
   - Members must be POD (primitives, enums, packs, fixed arrays)
 - Enum (integer base with optional default):
@@ -32,36 +25,13 @@ DSL Summary
 - Variant (tagged union):
   - `variant Name : <primitive-int>` alts `- <int> => Type` and optional default `= <int> => Type`
   - Discriminant is the explicit `<int>` value
-- Arrays:
-  - Dynamic sequence element: `{N * M}` reads a count of type `N`, then `M` items (sequence field only)
-  - Fixed dynamic-count: `{I * M}` literal `I` items (sequence field only)
-  - Fixed POD: `[I * M]` literal `I` items; POD-only (usable in `pack`)
-
-Lexical Notes
-- Whitespace: spaces, tabs and `\r` are ignored; newlines are significant and tokenized as `Newline`.
-- Comments: `# ...` to end-of-line are skipped (newline still tokenized).
-- Numbers: only unsigned integer literals are lexed; a leading `-` is a separate token used by the parser when needed.
-- Strings: `"..."` with escapes `\\`, `\"`, `\n`, `\t`. Multiline and unknown escapes are errors.
-- Symbols: `: - = ( ) [ ] { } * =>`.
+- Fixed array (fixed size contiguous array):
+  - `fixed_array : <integer literal * Type>`
+- Dynamic array (variably sized contiguous array):
+  - `dyn_array : CountType * Type` reads a count of type `CountType`, then `Type` items
+- Comments in the form of `# ...`
 
 Generated Code
 - Python: reader/writer helpers and simple data structures. See `generated/python/` examples.
 - C++: header-only types and readers/writers.
 - Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write`.
-
-Examples
-- See `assets/basic.jaw` and generated outputs under `generated/` for reference.
-
-Developing
-- Run tests: `cargo test`
-- Project layout:
-  - `src/tokens.rs`: tokenizer (lexer) and token definitions
-  - `src/tokenreader.rs`: small helper for parser token consumption
-  - `src/module.rs`: parser, validation, and type graph
-  - `src/codegen/`: Code generators
-  - `assets/`: example `.jaw` sources
-- Style: keep changes focused and small; prefer helpful error messages with spans.
-
-Notes
-- Aliases and imports (`alias`, `use/as`) are reserved but not implemented yet.
-- Endianness is little-endian in the Python generator; C++ expects the Reader/Writer to define endianness.
