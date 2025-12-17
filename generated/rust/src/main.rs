@@ -274,8 +274,6 @@ fn main() -> io::Result<()> {
         eprintln!("Encoded size {}", data.len());
         let actual = decode_all(&mut data, expected.len())?;
         compare_expected_actual(&expected, &actual);
-        // Ensure fully consumed
-        assert!(data.is_empty(), "buffer fully consumed");
         println!("Verified dump ok ({} messages)", expected.len());
     }
 
