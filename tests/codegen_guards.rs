@@ -1,0 +1,102 @@
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use jaw::{codegen, compile, intermediate};
+
+fn world_from(src: &str) -> compile::World {
+    let module = intermediate::Module::from_string("file".into(), src.into())
+        .expect("module should parse");
+    compile::compile(module).expect("module should compile")
+}
+
+fn temp_path(name: &str, ext: &str) -> PathBuf {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    dir.push("target");
+    dir.push("tmp_tests");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    dir.join(format!("{name}_{nanos}.{ext}"))
+}
+
+#[test]
+fn dynamic_array_write_checks_length_limits() {
+    let world = world_from(
+        r#"
+dyn_array Arr : u8 * u8
+"#,
+    );
+
+    // Rust
+    let rust_out = temp_path("rust_dyn_guard", "rs");
+    codegen::emit_rust(&world, &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(
+        rust_src.contains("array length too large to encode"),
+        "rust output missing length guard"
+    );
+    assert!(
+        rust_src.contains("max_len"),
+        "rust output missing max_len guard"
+    );
+    let _ = fs::remove_file(&rust_out);
+
+    // Python
+    let py_out = temp_path("python_dyn_guard", "py");
+    codegen::emit_python(&world, &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(
+        py_src.contains("array length too large to encode"),
+        "python output missing length guard"
+    );
+    assert!(
+        py_src.contains("len(values) >"),
+        "python output missing len guard"
+    );
+    let _ = fs::remove_file(&py_out);
+}
+
+#[test]
+fn variant_case_names_are_unique() {
+    let world = world_from(
+        r#"
+pack Foo
+- a : u8
+
+variant V : u8
+- 1 => Foo
+- 2 => Foo
+"#,
+    );
+
+    // Rust
+    let rust_out = temp_path("rust_variant_names", "rs");
+    codegen::emit_rust(&world, &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(
+        rust_src.contains("Foo_1"),
+        "rust output missing first case name"
+    );
+    assert!(
+        rust_src.contains("Foo_2"),
+        "rust output missing second case name"
+    );
+    let _ = fs::remove_file(&rust_out);
+
+    // Python
+    let py_out = temp_path("python_variant_names", "py");
+    codegen::emit_python(&world, &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(
+        py_src.contains("make_Foo_1"),
+        "python output missing first case helper"
+    );
+    assert!(
+        py_src.contains("type_Foo_2"),
+        "python output missing second case constant"
+    );
+    let _ = fs::remove_file(&py_out);
+}

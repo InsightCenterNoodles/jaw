@@ -990,7 +990,7 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
 
         let mut seen = HashSet::new();
         for dep in direct_dependencies(ty) {
-            if dep == id || !defs.contains_key(&dep) {
+            if !defs.contains_key(&dep) {
                 continue;
             }
             if seen.insert(dep) {
@@ -1087,6 +1087,21 @@ alias B : A
 
         let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
         let err = compile(module).expect_err("compile should reject cycles");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.to_lowercase().contains("cyclic"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn self_references_are_rejected() {
+        let src = r#"
+alias A : A
+"#;
+
+        let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+        let err = compile(module).expect_err("compile should reject self reference");
         let msg = format!("{err:#}");
         assert!(
             msg.to_lowercase().contains("cyclic"),

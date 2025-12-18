@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow, bail};
 
-use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World};
+use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, VariantMember, World};
 
 use super::*;
 
@@ -326,12 +326,16 @@ fn emit_type_definition(
 
                 for m in &v.members {
                     let mem_type_name = ctx.name_of(m.ty);
+                    let case_name = variant_case_name(ctx, m);
                     idt.wln("@staticmethod");
 
                     if ctx.is_void(m.ty) {
-                        idt.wln(&format!("def make_{0}():", mem_type_name));
+                        idt.wln(&format!("def make_{0}():", case_name));
                     } else {
-                        idt.wln(&format!("def make_{0}(value: {0}):", mem_type_name));
+                        idt.wln(&format!(
+                            "def make_{0}(value: {1}):",
+                            case_name, mem_type_name
+                        ));
                     }
 
                     {
@@ -345,17 +349,17 @@ fn emit_type_definition(
                 }
 
                 for m in &v.members {
-                    let mem_type_name = ctx.name_of(m.ty);
+                    let case_name = variant_case_name(ctx, m);
 
                     idt.wln(&format!(
                         "type_{}: ClassVar[int] = {}",
-                        mem_type_name, m.value
+                        case_name, m.value
                     ));
 
-                    idt.wln(&format!("def is_{}(self):", mem_type_name));
+                    idt.wln(&format!("def is_{}(self):", case_name));
                     {
                         let mut idt = idt.indent();
-                        idt.wln(&format!("return self.tag == self.type_{}", mem_type_name));
+                        idt.wln(&format!("return self.tag == self.type_{}", case_name));
                     }
                 }
             }
@@ -601,6 +605,11 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
         TypeKind::DynamicArray(arr) => {
             out.wln(&format!("def write_{name}(writer, values):"));
             let mut idt = out.indent();
+            let max_len = max_len_for_size(ctx, arr.size_type)?;
+            idt.wln(&format!(
+                "if len(values) > {}: raise ValueError('array length too large to encode')",
+                max_len
+            ));
             let size_write = write_primitive_method(ctx, arr.size_type)?;
             idt.wln(&format!("writer.{size_write}(len(values))"));
             if let Some(p) = ctx.direct_primitive(arr.value_type) {
@@ -729,6 +738,23 @@ fn emit_bitfield_member_read(
         _ => bail!("unsupported bitfield member type"),
     }
     Ok(())
+}
+
+fn variant_case_name(ctx: &PythonContext, m: &VariantMember) -> String {
+    sanitize(format!("{}_{}", ctx.name_of(m.ty), m.value))
+}
+
+fn max_len_for_size(ctx: &PythonContext, id: TypeID) -> Result<u128> {
+    let prim = ctx
+        .underlying_primitive(id)
+        .ok_or_else(|| anyhow!("expected primitive-compatible type"))?;
+    match (prim.dtype, prim.sign, prim.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok(u8::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => Ok(u16::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => Ok(u32::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => Ok(u64::MAX as u128),
+        _ => bail!("array size type must be an unsigned integer"),
+    }
 }
 
 fn read_primitive_method(ctx: &PythonContext, id: TypeID) -> Result<&'static str> {

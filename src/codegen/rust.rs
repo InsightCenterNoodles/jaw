@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 
-use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World};
+use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, VariantMember, World};
 
 use super::*;
 
@@ -433,18 +433,20 @@ fn emit_read_type_definition(
             {
                 let mut idt = out.indent();
                 for (idx, m) in variant.members.iter().enumerate() {
-                    let mty = if matches!(
+                    let case_name = variant_case_name(ctx, m, idx)?;
+                    let payload = if matches!(
                         ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
                         TypeKind::Void
                     ) {
-                        "()".to_string()
+                        None
                     } else {
-                        ctx.rust_type(m.ty)?
+                        Some(ctx.rust_type(m.ty)?)
                     };
-                    if mty == "()" {
-                        idt.wln(&format!("Void{idx},"));
+
+                    if let Some(mty) = payload {
+                        idt.wln(&format!("{case_name}({mty}),"));
                     } else {
-                        idt.wln(&format!("{mty}({mty}),"));
+                        idt.wln(&format!("{case_name},"));
                     }
                 }
             }
@@ -550,22 +552,20 @@ fn emit_write_type_definition(
             {
                 let mut idt = out.indent();
                 for (idx, m) in variant.members.iter().enumerate() {
-                    let mty = if matches!(
+                    let case_name = variant_case_name(ctx, m, idx)?;
+                    let payload = if matches!(
                         ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
                         TypeKind::Void
                     ) {
-                        "()".to_string()
+                        None
                     } else {
-                        ctx.rust_view_type(m.ty, "'a")?
+                        Some(ctx.rust_view_type(m.ty, "'a")?)
                     };
-                    if mty == "()" {
-                        idt.wln(&format!("Void{idx},"));
+
+                    if let Some(mty) = payload {
+                        idt.wln(&format!("{case_name}(&'a {mty}),"));
                     } else {
-                        let mut vname = mty.as_str();
-                        if let Some(x) = mty.find("<") {
-                            vname = mty.split_at(x).0;
-                        }
-                        idt.wln(&format!("{vname}(&'a {mty}),"));
+                        idt.wln(&format!("{case_name},"));
                     }
                 }
             }
@@ -768,6 +768,7 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
                 {
                     let mut mtch = idt.indent();
                     for (idx, m) in variant.members.iter().enumerate() {
+                        let case_name = variant_case_name(ctx, m, idx)?;
                         mtch.wln(&format!("{} => ", m.value));
                         {
                             let mut body = mtch.indent();
@@ -782,16 +783,11 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
                             };
 
                             if mty == "()" {
-                                body.wln(&format!("Ok({name}::Void{idx})"));
+                                body.wln(&format!("Ok({name}::{case_name})"));
                             } else {
-                                let mut vname = mty.as_str();
-                                if let Some(x) = mty.find("<") {
-                                    vname = mty.split_at(x).0;
-                                }
-
                                 let expr = read_expr(ctx, m.ty, "reader")?;
                                 body.wln(&format!("let payload = {expr}?;"));
-                                body.wln(&format!("Ok({name}::{vname}(payload))"));
+                                body.wln(&format!("Ok({name}::{case_name}(payload))"));
                             }
                         }
                         mtch.wln(",");
@@ -984,25 +980,12 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                 {
                     let mut mtch = idt.indent();
                     for (idx, m) in variant.members.iter().enumerate() {
-                        let mty = if matches!(
-                            ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
-                            TypeKind::Void
-                        ) {
-                            "()".to_string()
-                        } else {
-                            ctx.rust_view_type(m.ty, "'a")?
-                        };
+                        let case_name = variant_case_name(ctx, m, idx)?;
+                        let is_void =
+                            matches!(ctx.world.lookup(ctx.resolve_alias(m.ty)).kind, TypeKind::Void);
 
-                        let mut vname = mty.as_str();
-                        if let Some(x) = mty.find("<") {
-                            vname = mty.split_at(x).0;
-                        }
-
-                        if matches!(
-                            ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
-                            TypeKind::Void
-                        ) {
-                            mtch.wln(&format!("{name}::Void{idx} =>"));
+                        if is_void {
+                            mtch.wln(&format!("{name}::{case_name} =>"));
                             {
                                 let mut body = mtch.indent();
                                 body.wln(&format!("{}(writer, {})?;", write_tag, m.value));
@@ -1010,7 +993,7 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                             }
                             mtch.wln(",");
                         } else {
-                            mtch.wln(&format!("{name}::{vname}(inner) =>"));
+                            mtch.wln(&format!("{name}::{case_name}(inner) =>"));
                             {
                                 let mut body = mtch.indent();
                                 body.wln(&format!("{}(writer, {})?;", write_tag, m.value));
@@ -1027,6 +1010,7 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
         TypeKind::DynamicArray(arr) => {
             let values_ty = ctx.rust_view_type(id, "'_")?;
             let size_write = write_primitive_method(ctx, arr.size_type)?;
+            let max_len = max_len_for_size(ctx, arr.size_type)?;
             out.wln("#[allow(non_snake_case)]");
             out.wln(&format!(
                 "pub fn write_{name}<W: Write>(writer: &mut W, values: &{values_ty}) -> io::Result<()>"
@@ -1034,6 +1018,11 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
             {
                 let mut idt = out.indent();
                 idt.wln("let len = values.len();");
+                idt.wln(&format!(
+                    "let max_len: usize = {}usize;",
+                    max_len.min(usize::MAX as u128)
+                ));
+                idt.wln("if len > max_len { return Err(invalid_data(\"array length too large to encode\")); }");
                 idt.wln("let count: u64 = len.try_into().map_err(|_| invalid_data(\"array length too large to encode\"))?;");
                 idt.wln(&format!("{}(writer, count as _)?;", size_write));
                 if ctx.direct_primitive(arr.value_type).is_some() {
@@ -1120,6 +1109,24 @@ fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &
         }
     }
     Ok(())
+}
+
+fn variant_case_name(ctx: &RustContext, m: &VariantMember, _idx: usize) -> Result<String> {
+    let base = ctx.name_of(ctx.resolve_alias(m.ty));
+    Ok(sanitize(format!("{base}_{}", m.value)))
+}
+
+fn max_len_for_size(ctx: &RustContext, id: TypeID) -> Result<u128> {
+    let prim = ctx
+        .underlying_primitive(id)
+        .ok_or_else(|| anyhow!("expected primitive-compatible type"))?;
+    match (prim.dtype, prim.sign, prim.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok(u8::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => Ok(u16::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => Ok(u32::MAX as u128),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => Ok(u64::MAX as u128),
+        _ => bail!("array size type must be an unsigned integer"),
+    }
 }
 
 fn read_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> {

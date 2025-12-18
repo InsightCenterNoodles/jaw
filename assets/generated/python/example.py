@@ -97,22 +97,29 @@ def _write_primitive_array(writer, fmt, typecode, values: Iterable):
         arr.byteswap()
     writer.write_bytes(arr.tobytes())
 
-@enum.unique
-class BetterEnum(enum.IntEnum):
-    A = 0
-    B = 1
-    DEFAULT = 255
-    __default__ = DEFAULT
+@dataclass
+class MyPOD:
+    a_thing: int
+    b_thing: int
+
+@dataclass
+class MyOtherPOD:
+    first: MyPOD
+    second: array.array
+
+Alpha = MyOtherPOD
 
 @enum.unique
 class PlainEnum(enum.IntEnum):
     F1 = 0
     F2 = 1
 
-@dataclass
-class MyPOD:
-    a_thing: int
-    b_thing: int
+@enum.unique
+class BetterEnum(enum.IntEnum):
+    A = 0
+    B = 1
+    DEFAULT = 255
+    __default__ = DEFAULT
 
 @dataclass
 class MyFlags:
@@ -125,87 +132,39 @@ class SmallSeq:
     list: array.array
 
 @dataclass
-class MyOtherPOD:
-    first: MyPOD
-    second: array.array
-
-Alpha = MyOtherPOD
-
-@dataclass
 class MyVariant:
     tag: int = 0
     value: object = None
     @staticmethod
-    def make_MyPOD(value: MyPOD):
+    def make_MyPOD_1(value: MyPOD):
         return MyVariant(1, value)
     @staticmethod
-    def make_MyOtherPOD(value: MyOtherPOD):
+    def make_MyOtherPOD_2(value: MyOtherPOD):
         return MyVariant(2, value)
     @staticmethod
-    def make_void():
+    def make_void_3():
         return MyVariant(3, None)
     @staticmethod
-    def make_SmallSeq(value: SmallSeq):
+    def make_SmallSeq_4(value: SmallSeq):
         return MyVariant(4, value)
-    type_MyPOD: ClassVar[int] = 1
-    def is_MyPOD(self):
-        return self.tag == self.type_MyPOD
-    type_MyOtherPOD: ClassVar[int] = 2
-    def is_MyOtherPOD(self):
-        return self.tag == self.type_MyOtherPOD
-    type_void: ClassVar[int] = 3
-    def is_void(self):
-        return self.tag == self.type_void
-    type_SmallSeq: ClassVar[int] = 4
-    def is_SmallSeq(self):
-        return self.tag == self.type_SmallSeq
+    type_MyPOD_1: ClassVar[int] = 1
+    def is_MyPOD_1(self):
+        return self.tag == self.type_MyPOD_1
+    type_MyOtherPOD_2: ClassVar[int] = 2
+    def is_MyOtherPOD_2(self):
+        return self.tag == self.type_MyOtherPOD_2
+    type_void_3: ClassVar[int] = 3
+    def is_void_3(self):
+        return self.tag == self.type_void_3
+    type_SmallSeq_4: ClassVar[int] = 4
+    def is_SmallSeq_4(self):
+        return self.tag == self.type_SmallSeq_4
 
 @dataclass
 class Root:
     name: array.array
     var: MyVariant
 
-def read_ShortString(reader):
-    count = reader.read_u8()
-    return _read_primitive_array(reader, '<B', 'B', count)
-    
-def write_ShortString(writer, values):
-    writer.write_u8(len(values))
-    _write_primitive_array(writer, '<B', 'B', values)
-    
-def read_BetterEnum(reader):
-    raw = reader.read_u8()
-    if raw in BetterEnum._value2member_map_:
-        return BetterEnum(raw)
-    return BetterEnum.DEFAULT
-    
-def write_BetterEnum(writer, value):
-    writer.write_u8(int(value))
-    
-def read_PlainEnum(reader):
-    raw = reader.read_u8()
-    if raw in PlainEnum._value2member_map_:
-        return PlainEnum(raw)
-    raise ValueError(f'invalid discriminant for PlainEnum: {raw!r}')
-    
-def write_PlainEnum(writer, value):
-    writer.write_u8(int(value))
-    
-def read_FixedString(reader):
-    return _read_primitive_array(reader, '<B', 'B', 4)
-    
-def write_FixedString(writer, values):
-    if len(values) != 4: raise ValueError('expected 4 items')
-    _write_primitive_array(writer, '<B', 'B', values)
-    
-def read_Data(reader):
-    count = reader.read_u8()
-    return _read_primitive_array(reader, '<f', 'f', count)
-    
-def write_Data(writer, values):
-    writer.write_u8(len(values))
-    _write_primitive_array(writer, '<f', 'f', values)
-    
 def read_MyPOD(reader):
     return MyPOD(
         a_thing = reader.read_u8(),
@@ -216,28 +175,30 @@ def write_MyPOD(writer, value):
     writer.write_u8(value.a_thing)
     writer.write_u64(value.b_thing)
     
-def read_MyFlags(reader):
-    raw = reader.read_u8()
-    return MyFlags(
-        is_thing = (raw >> 0) & 0x1,
-        another_thing = (raw >> 1) & 0x3,
-        some_stuff = (raw >> 3) & 0x3,
-    )
+def read_FixedString(reader):
+    return _read_primitive_array(reader, '<B', 'B', 4)
     
-def write_MyFlags(writer, value):
-    raw = 0
-    raw |= (int(value.is_thing) & 0x1) << 0
-    raw |= (int(value.another_thing) & 0x3) << 1
-    raw |= (int(value.some_stuff) & 0x3) << 3
-    writer.write_u8(raw)
+def write_FixedString(writer, values):
+    if len(values) != 4: raise ValueError('expected 4 items')
+    _write_primitive_array(writer, '<B', 'B', values)
     
-def read_SmallSeq(reader):
-    return SmallSeq(
-        list = read_Data(reader),
-    )
+def read_ShortString(reader):
+    count = reader.read_u8()
+    return _read_primitive_array(reader, '<B', 'B', count)
     
-def write_SmallSeq(writer, value):
-    write_Data(writer, value.list)
+def write_ShortString(writer, values):
+    if len(values) > 255: raise ValueError('array length too large to encode')
+    writer.write_u8(len(values))
+    _write_primitive_array(writer, '<B', 'B', values)
+    
+def read_Data(reader):
+    count = reader.read_u8()
+    return _read_primitive_array(reader, '<f', 'f', count)
+    
+def write_Data(writer, values):
+    if len(values) > 255: raise ValueError('array length too large to encode')
+    writer.write_u8(len(values))
+    _write_primitive_array(writer, '<f', 'f', values)
     
 def read_MyOtherPOD(reader):
     return MyOtherPOD(
@@ -254,6 +215,54 @@ def read_Alpha(reader):
     
 def write_Alpha(writer, value):
     write_MyOtherPOD(writer, value)
+    
+def read_PlainEnum(reader):
+    raw = reader.read_u8()
+    if raw in PlainEnum._value2member_map_:
+        return PlainEnum(raw)
+    raise ValueError(f'invalid discriminant for PlainEnum: {raw!r}')
+    
+def write_PlainEnum(writer, value):
+    writer.write_u8(int(value))
+    
+def read_BetterEnum(reader):
+    raw = reader.read_u8()
+    if raw in BetterEnum._value2member_map_:
+        return BetterEnum(raw)
+    return BetterEnum.DEFAULT
+    
+def write_BetterEnum(writer, value):
+    writer.write_u8(int(value))
+    
+def read_MyFlags(reader):
+    raw = reader.read_u8()
+    is_thing = int((raw >> 0) & 0x1)
+    another_thing = int((raw >> 1) & 0x3)
+    some_stuff_raw = int((raw >> 3) & 0x3)
+    if some_stuff_raw in PlainEnum._value2member_map_:
+        some_stuff = PlainEnum(some_stuff_raw)
+    else:
+        raise ValueError(f'invalid discriminant for PlainEnum in bitfield: {some_stuff_raw!r}')
+    return MyFlags(
+        is_thing = is_thing,
+        another_thing = another_thing,
+        some_stuff = some_stuff,
+    )
+    
+def write_MyFlags(writer, value):
+    raw = 0
+    raw |= (int(value.is_thing) & 0x1) << 0
+    raw |= (int(value.another_thing) & 0x3) << 1
+    raw |= (int(value.some_stuff) & 0x3) << 3
+    writer.write_u8(raw)
+    
+def read_SmallSeq(reader):
+    return SmallSeq(
+        list = read_Data(reader),
+    )
+    
+def write_SmallSeq(writer, value):
+    write_Data(writer, value.list)
     
 def read_MyVariant(reader):
     tag = reader.read_u8()

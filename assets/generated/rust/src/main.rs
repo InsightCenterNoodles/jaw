@@ -25,7 +25,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: name,
-                var: MyVariant::MyPOD(&MyPOD {
+                var: MyVariant::MyPOD_1(&MyPOD {
                     a_thing: 10,
                     b_thing: 20,
                 }),
@@ -40,7 +40,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: b"",
-                var: MyVariant::MyOtherPOD(&MyOtherPOD {
+                var: MyVariant::MyOtherPOD_2(&MyOtherPOD {
                     first: MyPOD {
                         a_thing: 1,
                         b_thing: 0x1122334455667788,
@@ -58,7 +58,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: b"void",
-                var: MyVariant::Void2,
+                var: MyVariant::void_3,
             },
         )
         .unwrap();
@@ -70,7 +70,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: b"floats",
-                var: MyVariant::SmallSeq(&SmallSeq {
+                var: MyVariant::SmallSeq_4(&SmallSeq {
                     list: &[1.0, 2.5, -3.25, 0.0],
                 }),
             },
@@ -84,7 +84,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: b"pod-two",
-                var: MyVariant::MyPOD(&MyPOD {
+                var: MyVariant::MyPOD_1(&MyPOD {
                     a_thing: 255,
                     b_thing: 0xCAFEBABECAFED00D,
                 }),
@@ -100,7 +100,7 @@ fn encode_expected() -> Vec<u8> {
             &mut expected,
             &Root {
                 name: b"seq-long",
-                var: MyVariant::SmallSeq(&SmallSeq { list: &vec }),
+                var: MyVariant::SmallSeq_4(&SmallSeq { list: &vec }),
             },
         )
         .unwrap();
@@ -118,7 +118,7 @@ fn make_expected() -> Vec<example::read::Root> {
     {
         expected.push(Root {
             name: b"pod-one".into(),
-            var: MyVariant::MyPOD(MyPOD {
+            var: MyVariant::MyPOD_1(MyPOD {
                 a_thing: 10,
                 b_thing: 20,
             }),
@@ -129,7 +129,7 @@ fn make_expected() -> Vec<example::read::Root> {
     {
         expected.push(Root {
             name: b"".into(),
-            var: MyVariant::MyOtherPOD(MyOtherPOD {
+            var: MyVariant::MyOtherPOD_2(MyOtherPOD {
                 first: MyPOD {
                     a_thing: 1,
                     b_thing: 0x1122334455667788,
@@ -143,7 +143,7 @@ fn make_expected() -> Vec<example::read::Root> {
     {
         expected.push(Root {
             name: b"void".into(),
-            var: MyVariant::Void2,
+            var: MyVariant::void_3,
         });
     }
 
@@ -151,7 +151,7 @@ fn make_expected() -> Vec<example::read::Root> {
     {
         expected.push(Root {
             name: b"floats".into(),
-            var: MyVariant::SmallSeq(SmallSeq {
+            var: MyVariant::SmallSeq_4(SmallSeq {
                 list: [1.0, 2.5, -3.25, 0.0].into(),
             }),
         });
@@ -161,7 +161,7 @@ fn make_expected() -> Vec<example::read::Root> {
     {
         expected.push(Root {
             name: b"pod-two".into(),
-            var: MyVariant::MyPOD(MyPOD {
+            var: MyVariant::MyPOD_1(MyPOD {
                 a_thing: 255,
                 b_thing: 0xCAFEBABECAFED00D,
             }),
@@ -173,7 +173,7 @@ fn make_expected() -> Vec<example::read::Root> {
         let vec: Vec<_> = (0..10).map(|x| (x as f32) * 0.5).collect();
         expected.push(Root {
             name: b"seq-long".into(),
-            var: MyVariant::SmallSeq(SmallSeq { list: vec }),
+            var: MyVariant::SmallSeq_4(SmallSeq { list: vec }),
         });
     }
 
@@ -202,11 +202,11 @@ fn compare_expected_actual(expected: &[example::read::Root], actual: &[example::
         demand(a.name == e.name, &format!("name matches at {}", i));
         // Compare variant kind
         match (&e.var, &a.var) {
-            (MyVariant::MyPOD(ep), MyVariant::MyPOD(ap)) => {
+            (MyVariant::MyPOD_1(ep), MyVariant::MyPOD_1(ap)) => {
                 demand(ap.a_thing == ep.a_thing, &format!("MyPOD.a_thing at {}", i));
                 demand(ap.b_thing == ep.b_thing, &format!("MyPOD.b_thing at {}", i));
             }
-            (MyVariant::MyOtherPOD(eo), MyVariant::MyOtherPOD(ao)) => {
+            (MyVariant::MyOtherPOD_2(eo), MyVariant::MyOtherPOD_2(ao)) => {
                 demand(
                     ao.first.a_thing == eo.first.a_thing,
                     &format!("MyOtherPOD.first.a_thing at {}", i),
@@ -222,10 +222,10 @@ fn compare_expected_actual(expected: &[example::read::Root], actual: &[example::
                     );
                 }
             }
-            (MyVariant::Void2, MyVariant::Void2) => {
+            (MyVariant::void_3, MyVariant::void_3) => {
                 // void payload, nothing to compare
             }
-            (MyVariant::SmallSeq(es), MyVariant::SmallSeq(as_)) => {
+            (MyVariant::SmallSeq_4(es), MyVariant::SmallSeq_4(as_)) => {
                 demand(
                     as_.list.len() == es.list.len(),
                     &format!("SmallSeq.size at {}", i),
