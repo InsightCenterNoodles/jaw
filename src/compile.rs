@@ -1,7 +1,8 @@
 use anyhow::{Context, anyhow, bail};
 use itertools::Itertools;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet},
     fmt::Display,
     ops::RangeInclusive,
 };
@@ -221,7 +222,7 @@ impl Type {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct TypeID(u32);
 
 #[derive(Debug)]
@@ -974,12 +975,19 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
     let mut indegree: HashMap<TypeID, usize> = HashMap::new();
     let mut dependents: HashMap<TypeID, Vec<TypeID>> = HashMap::new();
 
-    for &id in defs.keys() {
-        indegree.entry(id).or_insert(0);
-        dependents.entry(id).or_default();
+    let mut ids: Vec<_> = defs.keys().copied().collect();
+    ids.sort();
+
+    for &id in &ids {
+        indegree.insert(id, 0);
+        dependents.insert(id, Vec::new());
     }
 
-    for (&id, ty) in defs {
+    for &id in &ids {
+        let ty = defs
+            .get(&id)
+            .expect("type id inserted into indegree without definition");
+
         let mut seen = HashSet::new();
         for dep in direct_dependencies(ty) {
             if dep == id || !defs.contains_key(&dep) {
@@ -987,25 +995,31 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
             }
             if seen.insert(dep) {
                 dependents.entry(dep).or_default().push(id);
-                *indegree.entry(id).or_insert(0) += 1;
+                *indegree
+                    .get_mut(&id)
+                    .expect("indegree missing for previously inserted id") += 1;
             }
         }
     }
 
-    let mut queue: VecDeque<TypeID> = indegree
+    for deps in dependents.values_mut() {
+        deps.sort();
+    }
+
+    let mut queue: BinaryHeap<Reverse<TypeID>> = indegree
         .iter()
-        .filter_map(|(&id, &deg)| if deg == 0 { Some(id) } else { None })
+        .filter_map(|(&id, &deg)| if deg == 0 { Some(Reverse(id)) } else { None })
         .collect();
     let mut order: Vec<TypeID> = Vec::with_capacity(indegree.len());
 
-    while let Some(id) = queue.pop_front() {
+    while let Some(Reverse(id)) = queue.pop() {
         order.push(id);
         if let Some(nexts) = dependents.get(&id) {
             for &n in nexts {
                 if let Some(d) = indegree.get_mut(&n) {
                     *d = d.saturating_sub(1);
                     if *d == 0 {
-                        queue.push_back(n);
+                        queue.push(Reverse(n));
                     }
                 }
             }
@@ -1078,6 +1092,48 @@ alias B : A
             msg.to_lowercase().contains("cyclic"),
             "unexpected error message: {msg}"
         );
+    }
+
+    #[test]
+    fn topological_sort_is_stable() {
+        let src = r#"
+pack A
+- a : u8
+
+pack B
+- b : u8
+
+pack C
+- a : A
+- b : B
+"#;
+
+        let expected = vec!["A", "B", "C"];
+        let mut seen_orders = vec![];
+
+        for _ in 0..8 {
+            let module =
+                intermediate::Module::from_string("file".into(), src.to_string()).unwrap();
+            let world = compile(module).expect("compile should succeed");
+            let names: Vec<String> = world
+                .iter()
+                .filter(|(_, ty)| {
+                    !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_))
+                })
+                .map(|(_, ty)| ty.ident.to_string())
+                .collect();
+
+            assert_eq!(names, expected, "toposort should respect declaration order");
+            seen_orders.push(names);
+        }
+
+        let first = seen_orders.first().expect("at least one order recorded");
+        for order in seen_orders.iter().skip(1) {
+            assert_eq!(
+                order, first,
+                "toposort should be deterministic across invocations"
+            );
+        }
     }
 
     #[test]

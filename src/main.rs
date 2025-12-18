@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::bail;
 use clap::{Parser, ValueEnum};
 use jaw::codegen;
 
