@@ -1022,6 +1022,7 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                     "let max_len: usize = {}usize;",
                     max_len.min(usize::MAX as u128)
                 ));
+                idt.wln("// Fail instead of truncating if the vector does not fit in the count type.");
                 idt.wln("if len > max_len { return Err(invalid_data(\"array length too large to encode\")); }");
                 idt.wln("let count: u64 = len.try_into().map_err(|_| invalid_data(\"array length too large to encode\"))?;");
                 idt.wln(&format!("{}(writer, count as _)?;", size_write));
@@ -1111,11 +1112,13 @@ fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &
     Ok(())
 }
 
+// Keep variant arm names stable and unique even when payload types repeat.
 fn variant_case_name(ctx: &RustContext, m: &VariantMember, _idx: usize) -> Result<String> {
     let base = ctx.name_of(ctx.resolve_alias(m.ty));
     Ok(sanitize(format!("{base}_{}", m.value)))
 }
 
+// Shared bound for dynamic array length encoding, based on the declared counter type.
 fn max_len_for_size(ctx: &RustContext, id: TypeID) -> Result<u128> {
     let prim = ctx
         .underlying_primitive(id)

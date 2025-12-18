@@ -222,6 +222,7 @@ impl Type {
     }
 }
 
+// Ordered so we can use TypeIDs directly as stable sort keys.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct TypeID(u32);
 
@@ -815,6 +816,7 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
             },
         ];
 
+        // Seed the world with builtin primitives/void so user definitions can refer to them.
         let names: Vec<_> = names
             .into_iter()
             .map(|x| {
@@ -1006,6 +1008,7 @@ fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
         deps.sort();
     }
 
+    // Use a min-heap on TypeID to make the traversal deterministic across runs.
     let mut queue: BinaryHeap<Reverse<TypeID>> = indegree
         .iter()
         .filter_map(|(&id, &deg)| if deg == 0 { Some(Reverse(id)) } else { None })

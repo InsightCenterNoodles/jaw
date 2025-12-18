@@ -607,6 +607,9 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             let mut idt = out.indent();
             let max_len = max_len_for_size(ctx, arr.size_type)?;
             idt.wln(&format!(
+                "# Fail instead of truncating if the list does not fit in the count type."
+            ));
+            idt.wln(&format!(
                 "if len(values) > {}: raise ValueError('array length too large to encode')",
                 max_len
             ));
@@ -744,6 +747,7 @@ fn variant_case_name(ctx: &PythonContext, m: &VariantMember) -> String {
     sanitize(format!("{}_{}", ctx.name_of(m.ty), m.value))
 }
 
+// Shared bound for dynamic array length encoding, based on the declared counter type.
 fn max_len_for_size(ctx: &PythonContext, id: TypeID) -> Result<u128> {
     let prim = ctx
         .underlying_primitive(id)

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Smoke tests over emitted source to ensure critical guards/naming make it into generated code.
 use jaw::{codegen, compile, intermediate};
 
 fn world_from(src: &str) -> compile::World {
