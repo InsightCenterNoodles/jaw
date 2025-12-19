@@ -4,7 +4,7 @@ mod rust;
 
 use std::{fmt::Display, io::Write, path::Path};
 
-use crate::compile::World;
+use crate::{GlobalOptions, compile::World};
 use anyhow::Context;
 
 // MARK: Inner
@@ -151,24 +151,36 @@ fn open_outfile(
     }))
 }
 
-pub fn emit_cpp(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub fn emit_cpp(
+    world: &World,
+    global: &GlobalOptions,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mut out = open_outfile(path, "{", "}")?;
-    cpp::emit(world, &mut out)
+    cpp::emit(world, global, &mut out)
         .with_context(|| format!("while generating C++ into {}", path.display()))
 }
 
-pub fn emit_python(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub fn emit_python(
+    world: &World,
+    global: &GlobalOptions,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mut out = open_outfile(path, "", "")?;
-    python::emit(world, &mut out)
+    python::emit(world, global, &mut out)
         .with_context(|| format!("while generating Python into {}", path.display()))
 }
 
-pub fn emit_rust(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub fn emit_rust(
+    world: &World,
+    global: &GlobalOptions,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<()> {
     let path = path.as_ref();
     let mut out = open_outfile(path, "{", "}")?;
-    rust::emit(world, &mut out)
+    rust::emit(world, global, &mut out)
         .with_context(|| format!("while generating Rust into {}", path.display()))
 }
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
-use jaw::codegen;
+use jaw::{GlobalOptions, codegen};
 
 #[derive(Debug, Clone, ValueEnum)]
 enum GeneratorKind {
@@ -22,6 +22,9 @@ struct Arguments {
 
     /// Output path, based on input
     output: PathBuf,
+
+    #[command(flatten)]
+    options: GlobalOptions,
 }
 
 use std::process::ExitCode;
@@ -43,9 +46,9 @@ fn process() -> anyhow::Result<()> {
     let world = jaw::compile::compile(module)?;
 
     match args.kind {
-        GeneratorKind::Cpp => codegen::emit_cpp(&world, args.output)?,
-        GeneratorKind::Python => codegen::emit_python(&world, args.output)?,
-        GeneratorKind::Rust => codegen::emit_rust(&world, args.output)?,
+        GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,
+        GeneratorKind::Python => codegen::emit_python(&world, &args.options, args.output)?,
+        GeneratorKind::Rust => codegen::emit_rust(&world, &args.options, args.output)?,
     }
 
     Ok(())

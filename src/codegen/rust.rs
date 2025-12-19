@@ -2,12 +2,14 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow, bail};
 
-use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, VariantMember, World};
+use crate::compile::{
+    BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, VariantMember, World,
+};
 
 use super::*;
 
-pub fn emit(world: &World, out: &mut Outfile) -> Result<()> {
-    let ctx = RustContext::new(world)?;
+pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> Result<()> {
+    let ctx = RustContext::new(world, global)?;
 
     emit_preamble(out);
     out.newline();
@@ -36,16 +38,21 @@ impl RustFlavor {
 
 struct RustContext<'a> {
     world: &'a World,
+    options: &'a GlobalOptions,
     names: HashMap<TypeID, String>,
 }
 
 impl<'a> RustContext<'a> {
-    fn new(world: &'a World) -> Result<Self> {
+    fn new(world: &'a World, options: &'a GlobalOptions) -> Result<Self> {
         let mut names = HashMap::new();
         for (id, ty) in world.iter() {
             names.insert(id, sanitize(ty.ident.to_string()));
         }
-        Ok(Self { world, names })
+        Ok(Self {
+            world,
+            options,
+            names,
+        })
     }
 
     fn name_of(&self, id: TypeID) -> String {
@@ -140,11 +147,19 @@ impl<'a> RustContext<'a> {
         let ty = self.world.lookup(id);
 
         match &ty.kind {
-            TypeKind::DynamicArray(dynamic_array) if self.is_pod(dynamic_array.value_type) => {
-                Some(&self.world.lookup(dynamic_array.value_type).kind)
+            TypeKind::DynamicArray(dynamic_array) => {
+                let elem = self.resolve_alias(dynamic_array.value_type);
+                match &self.world.lookup(elem).kind {
+                    TypeKind::Primitive(_) | TypeKind::Pack(_) => Some(&self.world.lookup(elem).kind),
+                    _ => None,
+                }
             }
-            TypeKind::FixedArray(fixed_array) if self.is_pod(fixed_array.value_type) => {
-                Some(&self.world.lookup(fixed_array.value_type).kind)
+            TypeKind::FixedArray(fixed_array) => {
+                let elem = self.resolve_alias(fixed_array.value_type);
+                match &self.world.lookup(elem).kind {
+                    TypeKind::Primitive(_) | TypeKind::Pack(_) => Some(&self.world.lookup(elem).kind),
+                    _ => None,
+                }
             }
             _ => None,
         }
@@ -211,6 +226,30 @@ impl<'a> RustContext<'a> {
             TypeKind::Alias(_) => unreachable!("aliases resolved earlier"),
         };
         Ok(out)
+    }
+
+    fn insert_optional_size_check(
+        &self,
+        dest: &mut impl Sink,
+        count_var_name: &str,
+        value_ty_name: &str,
+    ) {
+        let Some(byte_limit) = self.options.guard_array_size else {
+            return;
+        };
+        dest.wln(&format!(
+            "let byte_count: u128 = ({} as u128)",
+            count_var_name
+        ));
+        dest.wln(&format!(
+            "    .checked_mul(std::mem::size_of::<{}>() as u128)",
+            value_ty_name
+        ));
+        dest.wln("    .ok_or_else(|| invalid_data(\"array too large\"))?;");
+        dest.wln(&format!(
+            "if byte_count > {}u128 {{ return Err(invalid_data(\"array too large\")); }}",
+            byte_limit
+        ));
     }
 }
 
@@ -412,6 +451,15 @@ fn emit_read_type_definition(
 
             out.wln(&format!("unsafe impl bytemuck::Zeroable for {name} {{ }}"));
             out.wln(&format!("unsafe impl bytemuck::Pod for {name} {{ }}"));
+            out.wln(&format!("impl Default for {name}"));
+            {
+                let mut idt = out.indent();
+                idt.wln("fn default() -> Self");
+                {
+                    let mut body = idt.indent();
+                    body.wln(&format!("<{name} as bytemuck::Zeroable>::zeroed()"));
+                }
+            }
 
             out.newline();
         }
@@ -516,7 +564,7 @@ fn emit_write_type_definition(
             out.newline();
         }
         TypeKind::Pack(pack) => {
-            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
+            out.wln("#[derive(Debug, Default, Clone, Copy, PartialEq)]");
             out.wln("#[repr(C, packed(1))]");
             out.wln(&format!("pub struct {name}"));
             {
@@ -811,6 +859,8 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
                 idt.wln(&format!("let count_raw = {size_read}(reader)?;"));
                 idt.wln("let count: usize = count_raw.try_into().map_err(|_| invalid_data(\"array length too large\"))?;");
 
+                ctx.insert_optional_size_check(&mut idt, "count", &elem_name);
+
                 match ctx.can_bulk_array(id) {
                     Some(TypeKind::Primitive(x)) if x.is_u8() => {
                         idt.wln("let mut out = vec![Default::default(); count];");
@@ -981,8 +1031,10 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                     let mut mtch = idt.indent();
                     for (idx, m) in variant.members.iter().enumerate() {
                         let case_name = variant_case_name(ctx, m, idx)?;
-                        let is_void =
-                            matches!(ctx.world.lookup(ctx.resolve_alias(m.ty)).kind, TypeKind::Void);
+                        let is_void = matches!(
+                            ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                            TypeKind::Void
+                        );
 
                         if is_void {
                             mtch.wln(&format!("{name}::{case_name} =>"));
@@ -1022,7 +1074,9 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                     "let max_len: usize = {}usize;",
                     max_len.min(usize::MAX as u128)
                 ));
-                idt.wln("// Fail instead of truncating if the vector does not fit in the count type.");
+                idt.wln(
+                    "// Fail instead of truncating if the vector does not fit in the count type.",
+                );
                 idt.wln("if len > max_len { return Err(invalid_data(\"array length too large to encode\")); }");
                 idt.wln("let count: u64 = len.try_into().map_err(|_| invalid_data(\"array length too large to encode\"))?;");
                 idt.wln(&format!("{}(writer, count as _)?;", size_write));

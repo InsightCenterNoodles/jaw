@@ -8,8 +8,8 @@ use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, Ty
 
 use super::*;
 
-pub fn emit(world: &World, out: &mut Outfile) -> anyhow::Result<()> {
-    let ctx = CppContext::new(world)?;
+pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow::Result<()> {
+    let ctx = CppContext::new(world, global)?;
 
     emit_preamble(out, &ctx.namespace)?;
 
@@ -36,6 +36,7 @@ pub fn emit(world: &World, out: &mut Outfile) -> anyhow::Result<()> {
 
 struct CppContext<'a> {
     world: &'a World,
+    options: &'a GlobalOptions,
     names: HashMap<TypeID, String>,
     namespace: String,
 }
@@ -47,13 +48,14 @@ enum Namespace {
 }
 
 impl<'a> CppContext<'a> {
-    fn new(world: &'a World) -> anyhow::Result<Self> {
+    fn new(world: &'a World, options: &'a GlobalOptions) -> anyhow::Result<Self> {
         let mut names = HashMap::new();
         for (id, ty) in world.iter() {
             names.insert(id, sanitize(ty.ident.to_string()));
         }
         Ok(Self {
             world,
+            options,
             names,
             namespace: sanitize(world.module_name()),
         })
@@ -139,14 +141,46 @@ impl<'a> CppContext<'a> {
         //println!("CAN OPTIM {ty:?}");
 
         match &ty.kind {
-            TypeKind::DynamicArray(dynamic_array) => self.is_pod(dynamic_array.value_type),
-            TypeKind::FixedArray(fixed_array) => self.is_pod(fixed_array.value_type),
+            TypeKind::DynamicArray(dynamic_array) => {
+                let elem = self.resolve_alias(dynamic_array.value_type);
+                matches!(
+                    &self.world.lookup(elem).kind,
+                    TypeKind::Primitive(_) | TypeKind::Pack(_)
+                )
+            }
+            TypeKind::FixedArray(fixed_array) => {
+                let elem = self.resolve_alias(fixed_array.value_type);
+                matches!(
+                    &self.world.lookup(elem).kind,
+                    TypeKind::Primitive(_) | TypeKind::Pack(_)
+                )
+            }
             _ => false,
         }
     }
 
     fn is_void(&self, id: TypeID) -> bool {
         matches!(&self.world.lookup(id).kind, TypeKind::Void)
+    }
+
+    fn insert_optional_size_check(
+        &self,
+        dest: &mut impl Sink,
+        count_var_name: &str,
+        value_var_name: &str,
+    ) {
+        let Some(byte_limit) = self.options.guard_array_size else {
+            return;
+        };
+        dest.wln(&format!(
+            "const uint64_t elem_size = static_cast<uint64_t>(sizeof({}));",
+            value_var_name
+        ));
+        dest.wln(&format!("const uint64_t byte_limit = {}ULL;", byte_limit));
+        dest.wln(&format!(
+            "if (elem_size != 0 && static_cast<uint64_t>({}) > (byte_limit / elem_size)) return false;",
+            count_var_name
+        ));
     }
 }
 
@@ -710,6 +744,7 @@ fn emit_read_impl(
                 idt.wln("if (!read_scalar(reader, count_raw)) return false;");
                 idt.wln("auto count = static_cast<uint64_t>(count_raw);");
                 idt.wln("if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;");
+                ctx.insert_optional_size_check(&mut idt, "count", &value_ty);
                 idt.wln(&format!(
                     "auto byte_count = sizeof({}) * static_cast<size_t>(count);",
                     value_ty
@@ -724,6 +759,7 @@ fn emit_read_impl(
                 idt.wln("if (!read_scalar(reader, count_raw)) return false;");
                 idt.wln("auto count = static_cast<uint64_t>(count_raw);");
                 idt.wln("if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;");
+                ctx.insert_optional_size_check(&mut idt, "count", &value_ty);
                 idt.wln("value.clear();");
                 idt.wln("value.reserve(static_cast<size_t>(count));");
                 idt.wln("for (size_t i = 0; i < static_cast<size_t>(count); ++i)");

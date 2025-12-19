@@ -63,7 +63,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     // Python
     let python_dir = out_root.join("python");
     fs::create_dir_all(&python_dir)?;
-    codegen::emit_python(world, python_dir.join("example.py"))?;
+    codegen::emit_python(world, &Default::default(), python_dir.join("example.py"))?;
     copy_file(
         repo_root().join("assets/generated/python/driver.py"),
         python_dir.join("driver.py"),
@@ -73,7 +73,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     let cpp_src_dir = out_root.join("cpp");
     let cpp_src = cpp_src_dir.join("src");
     fs::create_dir_all(&cpp_src)?;
-    codegen::emit_cpp(world, cpp_src.join("example.hpp"))?;
+    codegen::emit_cpp(world, &Default::default(), cpp_src.join("example.hpp"))?;
     copy_file(
         repo_root().join("assets/generated/cpp/src/codec.hpp"),
         cpp_src.join("codec.hpp"),
@@ -104,7 +104,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
         repo_root().join("assets/generated/rust/src/main.rs"),
         rust_src.join("main.rs"),
     )?;
-    codegen::emit_rust(world, rust_src.join("example.rs"))?;
+    codegen::emit_rust(world, &Default::default(), rust_src.join("example.rs"))?;
 
     Ok(Bindings {
         python_dir: python_dir.clone(),

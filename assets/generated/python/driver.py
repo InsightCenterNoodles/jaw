@@ -75,6 +75,35 @@ def build_expected() -> List[example.Root]:
         )
     )
 
+    # 7) Variant = ComplexSeq (bitfields, fixed arrays of POD, dyn arrays of POD)
+    flags = example.MyFlags(
+        is_thing=1,
+        another_thing=2,
+        some_stuff=example.PlainEnum.F2,
+    )
+    fixed_list = [
+        example.MyPOD(0, 0),
+        example.MyPOD(1, 10),
+        example.MyPOD(2, 20),
+        example.MyPOD(3, 30),
+        example.MyPOD(4, 40),
+        example.MyPOD(5, 50),
+        example.MyPOD(6, 60),
+        example.MyPOD(7, 70),
+    ]
+    other_list = [
+        example.MyOtherPOD(example.MyPOD(9, 0x0102030405060708), [9, 8, 7, 6]),
+        example.MyOtherPOD(example.MyPOD(10, 0x1112131415161718), [1, 1, 2, 3]),
+        example.MyOtherPOD(example.MyPOD(11, 0x2122232425262728), [4, 5, 6, 7]),
+    ]
+    complex_seq = example.ComplexSeq(flags, fixed_list, other_list)
+    expected.append(
+        example.Root(
+            array.array("B", b"complex"),
+            example.MyVariant.make_ComplexSeq_5(complex_seq),
+        )
+    )
+
     return expected
 
 
@@ -124,6 +153,31 @@ def compare_expected_actual(expected: List[example.Root], actual: List[example.R
             demand(len(aseq.list) == len(es.list), f"SmallSeq.size at {i}")
             for j, (x, y) in enumerate(zip(aseq.list, es.list)):
                 demand(x == y, f"SmallSeq.value[{j}] at {i}")
+        elif e.var.is_ComplexSeq_5():
+            es = e.var.value
+            asq = a.var.value
+            demand(int(asq.flags.is_thing) == int(es.flags.is_thing), f"ComplexSeq.flags.is_thing at {i}")
+            demand(
+                int(asq.flags.another_thing) == int(es.flags.another_thing),
+                f"ComplexSeq.flags.another_thing at {i}",
+            )
+            demand(
+                int(asq.flags.some_stuff) == int(es.flags.some_stuff),
+                f"ComplexSeq.flags.some_stuff at {i}",
+            )
+            demand(len(asq.list) == len(es.list) == 8, f"ComplexSeq.list.size at {i}")
+            for j, (xp, yp) in enumerate(zip(asq.list, es.list)):
+                demand(int(xp.a_thing) == int(yp.a_thing), f"ComplexSeq.list[{j}].a_thing at {i}")
+                demand(int(xp.b_thing) == int(yp.b_thing), f"ComplexSeq.list[{j}].b_thing at {i}")
+            demand(len(asq.other_list) == len(es.other_list), f"ComplexSeq.other_list.size at {i}")
+            for j, (xo, yo) in enumerate(zip(asq.other_list, es.other_list)):
+                demand(int(xo.first.a_thing) == int(yo.first.a_thing), f"ComplexSeq.other_list[{j}].first.a_thing at {i}")
+                demand(int(xo.first.b_thing) == int(yo.first.b_thing), f"ComplexSeq.other_list[{j}].first.b_thing at {i}")
+                for k in range(4):
+                    demand(
+                        int(xo.second[k]) == int(yo.second[k]),
+                        f"ComplexSeq.other_list[{j}].second[{k}] at {i}",
+                    )
         else:
             demand(False, f"unexpected tag {tag} at {i}")
 
@@ -152,6 +206,19 @@ def main() -> None:
     data = encode_all(expected)
     actual = decode_all(data, len(expected))
     compare_expected_actual(expected, actual)
+    # Extra self-checks for DSL features not representable via Root
+    demand(
+        example.read_BetterEnum(example.Reader(bytes([2]))) == example.BetterEnum.DEFAULT,
+        "BetterEnum default",
+    )
+    w = example.Writer()
+    alpha = example.MyOtherPOD(example.MyPOD(1, 2), [1, 2, 3, 4])
+    example.write_Alpha(w, alpha)
+    alpha2 = example.read_Alpha(example.Reader(w.getvalue()))
+    demand(int(alpha2.first.a_thing) == int(alpha.first.a_thing), "Alpha.first.a_thing")
+    demand(int(alpha2.first.b_thing) == int(alpha.first.b_thing), "Alpha.first.b_thing")
+    for j in range(4):
+        demand(int(alpha2.second[j]) == int(alpha.second[j]), f"Alpha.second[{j}]")
     print(f"All checks passed ({len(expected)} messages)")
     if args.dump:
         with open(args.dump, "wb") as f:

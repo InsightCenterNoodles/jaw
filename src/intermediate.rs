@@ -959,7 +959,7 @@ mod tests {
             .map(|x| (x.ident.clone(), x))
             .collect();
 
-        assert_eq!(m.len(), 12);
+        assert_eq!(m.len(), 15);
 
         match &m[&"MyPOD".into()].kind {
             TypeKind::Pack(pack) => {
@@ -1024,6 +1024,32 @@ mod tests {
             other => panic!("SmallSeq parsed as unexpected kind: {:?}", other),
         }
 
+        match &m[&"MyPODFixedList".into()].kind {
+            TypeKind::FixedArray(arr) => {
+                assert_eq!(arr.count, 8);
+                assert_eq!(arr.value_type.as_str(), "MyPOD");
+            }
+            other => panic!("MyPODFixedList parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m[&"MyOtherPODDynList".into()].kind {
+            TypeKind::DynamicArray(arr) => {
+                assert_eq!(arr.size_type.as_str(), "u16");
+                assert_eq!(arr.value_type.as_str(), "MyOtherPOD");
+            }
+            other => panic!("MyOtherPODDynList parsed as unexpected kind: {:?}", other),
+        }
+
+        match &m[&"ComplexSeq".into()].kind {
+            TypeKind::Sequence(seq) => {
+                assert_eq!(
+                    struct_sig(&seq.members),
+                    vec![("flags", "MyFlags"), ("list", "MyPODFixedList"), ("other_list", "MyOtherPODDynList")]
+                );
+            }
+            other => panic!("ComplexSeq parsed as unexpected kind: {:?}", other),
+        }
+
         match &m[&"Root".into()].kind {
             TypeKind::Sequence(seq) => {
                 assert_eq!(
@@ -1067,7 +1093,8 @@ mod tests {
                         (1, "MyPOD"),
                         (2, "MyOtherPOD"),
                         (3, "void"),
-                        (4, "SmallSeq")
+                        (4, "SmallSeq"),
+                        (5, "ComplexSeq")
                     ]
                 );
             }

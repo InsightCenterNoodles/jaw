@@ -106,6 +106,61 @@ fn encode_expected() -> Vec<u8> {
         .unwrap();
     }
 
+    // 7) Variant = ComplexSeq (bitfields, fixed arrays of POD, dyn arrays of POD)
+    {
+        let fixed_list: [MyPOD; 8] = [
+            MyPOD { a_thing: 0, b_thing: 0 },
+            MyPOD { a_thing: 1, b_thing: 10 },
+            MyPOD { a_thing: 2, b_thing: 20 },
+            MyPOD { a_thing: 3, b_thing: 30 },
+            MyPOD { a_thing: 4, b_thing: 40 },
+            MyPOD { a_thing: 5, b_thing: 50 },
+            MyPOD { a_thing: 6, b_thing: 60 },
+            MyPOD { a_thing: 7, b_thing: 70 },
+        ];
+        let others = vec![
+            MyOtherPOD {
+                first: MyPOD {
+                    a_thing: 9,
+                    b_thing: 0x0102030405060708,
+                },
+                second: [9u8, 8u8, 7u8, 6u8],
+            },
+            MyOtherPOD {
+                first: MyPOD {
+                    a_thing: 10,
+                    b_thing: 0x1112131415161718,
+                },
+                second: [1u8, 1u8, 2u8, 3u8],
+            },
+            MyOtherPOD {
+                first: MyPOD {
+                    a_thing: 11,
+                    b_thing: 0x2122232425262728,
+                },
+                second: [4u8, 5u8, 6u8, 7u8],
+            },
+        ];
+        let flags = MyFlags {
+            is_thing: 1,
+            another_thing: 2,
+            some_stuff: PlainEnum::F2,
+        };
+        let seq = ComplexSeq {
+            flags,
+            list: &fixed_list,
+            other_list: &others,
+        };
+        write_Root(
+            &mut expected,
+            &Root {
+                name: b"complex",
+                var: MyVariant::ComplexSeq_5(&seq),
+            },
+        )
+        .unwrap();
+    }
+
     expected
 }
 
@@ -177,6 +232,53 @@ fn make_expected() -> Vec<example::read::Root> {
         });
     }
 
+    // 7) Variant = ComplexSeq (bitfields, fixed arrays of POD, dyn arrays of POD)
+    {
+        expected.push(Root {
+            name: b"complex".into(),
+            var: MyVariant::ComplexSeq_5(ComplexSeq {
+                flags: MyFlags {
+                    is_thing: 1,
+                    another_thing: 2,
+                    some_stuff: PlainEnum::F2,
+                },
+                list: [
+                    MyPOD { a_thing: 0, b_thing: 0 },
+                    MyPOD { a_thing: 1, b_thing: 10 },
+                    MyPOD { a_thing: 2, b_thing: 20 },
+                    MyPOD { a_thing: 3, b_thing: 30 },
+                    MyPOD { a_thing: 4, b_thing: 40 },
+                    MyPOD { a_thing: 5, b_thing: 50 },
+                    MyPOD { a_thing: 6, b_thing: 60 },
+                    MyPOD { a_thing: 7, b_thing: 70 },
+                ],
+                other_list: vec![
+                    MyOtherPOD {
+                        first: MyPOD {
+                            a_thing: 9,
+                            b_thing: 0x0102030405060708,
+                        },
+                        second: [9u8, 8u8, 7u8, 6u8],
+                    },
+                    MyOtherPOD {
+                        first: MyPOD {
+                            a_thing: 10,
+                            b_thing: 0x1112131415161718,
+                        },
+                        second: [1u8, 1u8, 2u8, 3u8],
+                    },
+                    MyOtherPOD {
+                        first: MyPOD {
+                            a_thing: 11,
+                            b_thing: 0x2122232425262728,
+                        },
+                        second: [4u8, 5u8, 6u8, 7u8],
+                    },
+                ],
+            }),
+        });
+    }
+
     expected
 }
 
@@ -234,6 +336,41 @@ fn compare_expected_actual(expected: &[example::read::Root], actual: &[example::
                     demand(*x == *y, &format!("SmallSeq.value[{}] at {}", j, i));
                 }
             }
+            (MyVariant::ComplexSeq_5(es), MyVariant::ComplexSeq_5(as_)) => {
+                demand(as_.flags.is_thing == es.flags.is_thing, &format!("ComplexSeq.flags.is_thing at {}", i));
+                demand(
+                    as_.flags.another_thing == es.flags.another_thing,
+                    &format!("ComplexSeq.flags.another_thing at {}", i),
+                );
+                demand(
+                    as_.flags.some_stuff == es.flags.some_stuff,
+                    &format!("ComplexSeq.flags.some_stuff at {}", i),
+                );
+                for (j, (x, y)) in as_.list.iter().zip(es.list.iter()).enumerate() {
+                    demand(x.a_thing == y.a_thing, &format!("ComplexSeq.list[{}].a_thing at {}", j, i));
+                    demand(x.b_thing == y.b_thing, &format!("ComplexSeq.list[{}].b_thing at {}", j, i));
+                }
+                demand(
+                    as_.other_list.len() == es.other_list.len(),
+                    &format!("ComplexSeq.other_list.size at {}", i),
+                );
+                for (j, (x, y)) in as_.other_list.iter().zip(es.other_list.iter()).enumerate() {
+                    demand(
+                        x.first.a_thing == y.first.a_thing,
+                        &format!("ComplexSeq.other_list[{}].first.a_thing at {}", j, i),
+                    );
+                    demand(
+                        x.first.b_thing == y.first.b_thing,
+                        &format!("ComplexSeq.other_list[{}].first.b_thing at {}", j, i),
+                    );
+                    for k in 0..4 {
+                        demand(
+                            x.second[k] == y.second[k],
+                            &format!("ComplexSeq.other_list[{}].second[{}] at {}", j, k, i),
+                        );
+                    }
+                }
+            }
             _ => demand(false, &format!("variant tag matches at {}", i)),
         }
     }
@@ -285,6 +422,34 @@ fn main() -> io::Result<()> {
     let actual = decode_all(&mut expected_bytes, expected.len())?;
     compare_expected_actual(&make_expected(), &actual);
     println!("All checks passed ({} messages)", expected.len());
+
+    // Extra self-checks for DSL features not representable via Root
+    {
+        use example::read::*;
+        let mut r = Cursor::new(vec![2u8]);
+        let got = read_BetterEnum(&mut r)?;
+        demand(got == BetterEnum::DEFAULT, "BetterEnum default");
+    }
+    {
+        use example::read as rmod;
+        use example::write as wmod;
+        let alpha = wmod::MyOtherPOD {
+            first: wmod::MyPOD {
+                a_thing: 1,
+                b_thing: 2,
+            },
+            second: [1u8, 2u8, 3u8, 4u8],
+        };
+        let mut buf = Vec::new();
+        wmod::write_Alpha(&mut buf, &alpha)?;
+        let mut cur = Cursor::new(buf);
+        let got = rmod::read_Alpha(&mut cur)?;
+        demand(got.first.a_thing == 1, "Alpha.first.a_thing");
+        demand(got.first.b_thing == 2, "Alpha.first.b_thing");
+        for j in 0..4 {
+            demand(got.second[j] == alpha.second[j], "Alpha.second");
+        }
+    }
 
     if let Some(path) = dump_path {
         fs::write(&path, &expected_bytes)?;

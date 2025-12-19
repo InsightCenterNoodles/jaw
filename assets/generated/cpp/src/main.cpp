@@ -149,6 +149,51 @@ static void validate(std::span<std::byte> data) {
         DEMAND(ref.list == data);
     }
 
+    {
+        RootReader root;
+        DEMAND(read(reader, root));
+
+        DEMAND(root.name == "complex");
+        auto ref = std::get<ComplexSeqReader>(root.var);
+
+        DEMAND(ref.flags.is_thing == 1);
+        DEMAND(ref.flags.another_thing == 2);
+        DEMAND(ref.flags.some_stuff == PlainEnumReader::F2);
+
+        // fixed array of POD packs
+        DEMAND(ref.list.size() == 8);
+        for (size_t i = 0; i < 8; ++i) {
+            DEMAND(ref.list[i].a_thing == static_cast<std::uint8_t>(i));
+            DEMAND(ref.list[i].b_thing == static_cast<std::uint64_t>(i * 10));
+        }
+
+        // dyn array of POD packs
+        std::vector<MyOtherPODReader> others;
+        ref.other_list.copy_to_vector(others);
+        DEMAND(others.size() == 3);
+
+        DEMAND(others[0].first.a_thing == 9);
+        DEMAND(others[0].first.b_thing == 0x0102030405060708ULL);
+        DEMAND(others[0].second == (std::array<std::uint8_t, 4>{9, 8, 7, 6}));
+
+        DEMAND(others[1].first.a_thing == 10);
+        DEMAND(others[1].first.b_thing == 0x1112131415161718ULL);
+        DEMAND(others[1].second == (std::array<std::uint8_t, 4>{1, 1, 2, 3}));
+
+        DEMAND(others[2].first.a_thing == 11);
+        DEMAND(others[2].first.b_thing == 0x2122232425262728ULL);
+        DEMAND(others[2].second == (std::array<std::uint8_t, 4>{4, 5, 6, 7}));
+    }
+
+    // Extra self-check: enum default behavior
+    {
+        std::vector<std::byte> buf { std::byte{2} };
+        auto r2 = VecReader { .src = buf };
+        BetterEnumReader e{};
+        DEMAND(read(r2, e));
+        DEMAND(e == BetterEnumReader::DEFAULT);
+    }
+
     std::printf("Validation complete\n");
 }
 
@@ -269,6 +314,58 @@ int main(int argc, char** argv) {
 
 
             SmallSeqWriter seq { .list = data };
+
+            RootWriter r {
+                .name = name,
+                .var  = &seq,
+            };
+
+            DEMAND(write(writer, r));
+        }
+
+        // 7) Variant = ComplexSeq (bitfields, fixed arrays of POD, dyn arrays of POD)
+        {
+            auto name = "complex"_bytes;
+
+            MyFlagsWriter flags {
+                .is_thing = 1,
+                .another_thing = 2,
+                .some_stuff = PlainEnumWriter::F2,
+            };
+
+            std::array<MyPODWriter, 8> fixed_list {
+                MyPODWriter { .a_thing = 0, .b_thing = 0 },
+                MyPODWriter { .a_thing = 1, .b_thing = 10 },
+                MyPODWriter { .a_thing = 2, .b_thing = 20 },
+                MyPODWriter { .a_thing = 3, .b_thing = 30 },
+                MyPODWriter { .a_thing = 4, .b_thing = 40 },
+                MyPODWriter { .a_thing = 5, .b_thing = 50 },
+                MyPODWriter { .a_thing = 6, .b_thing = 60 },
+                MyPODWriter { .a_thing = 7, .b_thing = 70 },
+            };
+
+            std::vector<MyOtherPODWriter> others {
+                MyOtherPODWriter {
+                    .first = MyPODWriter { .a_thing = 9, .b_thing = 0x0102030405060708ULL },
+                    .second = { 9, 8, 7, 6 },
+                },
+                MyOtherPODWriter {
+                    .first = MyPODWriter { .a_thing = 10, .b_thing = 0x1112131415161718ULL },
+                    .second = { 1, 1, 2, 3 },
+                },
+                MyOtherPODWriter {
+                    .first = MyPODWriter { .a_thing = 11, .b_thing = 0x2122232425262728ULL },
+                    .second = { 4, 5, 6, 7 },
+                },
+            };
+
+            auto other_span = std::span<MyOtherPODWriter>(others.data(), others.size());
+
+            ComplexSeqWriter seq {
+                .flags = flags,
+                .list = fixed_list,
+                .other_list = other_span,
+            };
 
             RootWriter r {
                 .name = name,
