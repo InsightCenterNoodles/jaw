@@ -81,6 +81,7 @@ pub struct DynamicArray {
 }
 
 impl DynamicArray {
+    /// Returns whether this array's element type is POD (used to decide aggregation behavior).
     pub fn is_aggregate(&self, world: &World) -> bool {
         world.lookup(self.value_type).is_pod(world)
     }
@@ -93,6 +94,7 @@ pub struct FixedArray {
 }
 
 impl FixedArray {
+    /// Returns whether this array's element type is POD (used to decide aggregation behavior).
     pub fn is_aggregate(&self, world: &World) -> bool {
         world.lookup(self.value_type).is_pod(world)
     }
@@ -126,6 +128,7 @@ pub struct Primitive {
 }
 
 impl Primitive {
+    /// Returns the bit width of this primitive as a concrete integer.
     fn bits(&self) -> u32 {
         match self.width {
             BitWidth::W8 => 8,
@@ -135,6 +138,7 @@ impl Primitive {
         }
     }
 
+    /// Returns whether this primitive is exactly `u8`.
     pub fn is_u8(&self) -> bool {
         matches!(
             (self.width, self.sign, self.dtype),
@@ -142,6 +146,7 @@ impl Primitive {
         )
     }
 
+    /// Validates that an integer value fits into this primitive's representable range.
     fn verify_can_fit(&self, v: i128) -> anyhow::Result<()> {
         let Datatype::Integer = self.dtype else {
             bail!("integer cannot fit in a float")
@@ -167,6 +172,7 @@ impl Primitive {
 }
 
 impl Display for Primitive {
+    /// Formats a primitive using the DSL's scalar naming convention (e.g. `u32`, `f64`).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ts = match (self.dtype, self.sign) {
             (Datatype::Integer, Signedness::Unsigned) => "u",
@@ -206,6 +212,7 @@ pub struct Type {
 }
 
 impl Type {
+    /// Returns whether this type is POD (plain-old-data) under the DSL rules.
     fn is_pod(&self, world: &World) -> bool {
         match &self.kind {
             TypeKind::Alias(alias) => world.lookup(alias.other).is_pod(world),
@@ -234,16 +241,19 @@ pub struct World {
 }
 
 impl World {
+    /// Looks up a type by `TypeID`.
     pub fn lookup(&self, tname: TypeID) -> &Type {
         self.definitions.get(&tname).unwrap()
     }
 
+    /// Iterates compiled type definitions in dependency order.
     pub fn iter(&self) -> impl Iterator<Item = (TypeID, &Type)> {
         self.sorted
             .iter()
             .filter_map(|id| self.definitions.get(id).map(|ty| (*id, ty)))
     }
 
+    /// Returns the module name from the parsed input.
     pub fn module_name(&self) -> &str {
         &self.module_name
     }
@@ -254,9 +264,12 @@ struct TypeIDAllocator {
 }
 
 impl TypeIDAllocator {
+    /// Creates a new allocator.
     fn new() -> Self {
         Self { last: 0 }
     }
+
+    /// Allocates the next available `TypeID`.
     fn next(&mut self) -> TypeID {
         let r = TypeID(self.last);
         self.last += 1;
@@ -269,6 +282,7 @@ struct CompileState {
 }
 
 impl CompileState {
+    /// Resolves an intermediate `TypeName` to a compiled `TypeID`.
     fn lookup(&self, tname: &intermediate::TypeName) -> anyhow::Result<TypeID> {
         let Some(x) = self.name_to_id.get(tname) else {
             bail!("unknown type name `{tname}`");
@@ -277,6 +291,7 @@ impl CompileState {
     }
 }
 
+/// Parses a bitfield range like `"0"` or `"1-3"` into an inclusive numeric range.
 fn string_to_range(range: String) -> anyhow::Result<RangeInclusive<u32>> {
     if let Some((a, b)) = range.split_once('-') {
         Ok(RangeInclusive::new(a.parse()?, b.parse()?))
@@ -286,6 +301,7 @@ fn string_to_range(range: String) -> anyhow::Result<RangeInclusive<u32>> {
     }
 }
 
+/// Converts an intermediate type definition into the internal compiled representation.
 fn convert(state: &CompileState, ty: intermediate::Type) -> anyhow::Result<(TypeID, Type)> {
     let this_id = state.lookup(&ty.ident)?;
 
@@ -440,6 +456,7 @@ struct Typeref {
 }
 
 impl From<&Type> for Typeref {
+    /// Constructs a diagnostic type reference from a compiled type.
     fn from(value: &Type) -> Self {
         Self {
             name: value.ident.clone(),
@@ -449,6 +466,7 @@ impl From<&Type> for Typeref {
 }
 
 impl Display for Typeref {
+    /// Formats a type reference for error messages.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Symbol {} {}", self.name, self.at)
     }
@@ -460,6 +478,7 @@ enum NotPODError {
     TypeNotPOD(Typeref),
 }
 
+/// Verifies that a type is POD, following aliases and container definitions.
 fn verify_is_pod(world: &World, tid: TypeID) -> anyhow::Result<()> {
     let ty = world.lookup(tid);
 
@@ -486,7 +505,7 @@ fn verify_is_pod(world: &World, tid: TypeID) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Asset that a type is an integer with a certain sign
+/// Asserts that a type is an integer with a specific signedness.
 fn verify_is_int_of(world: &World, tid: TypeID, sign: Signedness) -> anyhow::Result<Primitive> {
     let ty = world.lookup(tid);
 
@@ -503,6 +522,7 @@ fn verify_is_int_of(world: &World, tid: TypeID, sign: Signedness) -> anyhow::Res
     }
 }
 
+/// Asserts that a type is an integer primitive (signed or unsigned).
 fn verify_is_integer(world: &World, tid: TypeID) -> anyhow::Result<Primitive> {
     let ty = world.lookup(tid);
 
@@ -515,6 +535,7 @@ fn verify_is_integer(world: &World, tid: TypeID) -> anyhow::Result<Primitive> {
     }
 }
 
+/// Verifies alias constraints (currently no additional validation).
 fn verify_alias(_world: &World, _ty: &Type, _value: &Alias) -> anyhow::Result<()> {
     // nothing to do
 
@@ -523,6 +544,7 @@ fn verify_alias(_world: &World, _ty: &Type, _value: &Alias) -> anyhow::Result<()
 
 // verify unique names?
 
+/// Verifies a struct/pack/sequence member points at a known type.
 fn verify_structmem(world: &World, ty: &Type, value: &StructMember) -> anyhow::Result<()> {
     let ctx = || format!("while verifying {}.{}", Typeref::from(ty), value.name);
 
@@ -535,6 +557,7 @@ fn verify_structmem(world: &World, ty: &Type, value: &StructMember) -> anyhow::R
     Ok(())
 }
 
+/// Verifies that all strings in an iterator are unique.
 fn verify_unique<'a>(mut iter: impl Iterator<Item = &'a String>) -> anyhow::Result<()> {
     if !iter.all_unique() {
         let s = iter.duplicates().join(",");
@@ -545,6 +568,7 @@ fn verify_unique<'a>(mut iter: impl Iterator<Item = &'a String>) -> anyhow::Resu
     Ok(())
 }
 
+/// Verifies that a `pack` has unique members and that each member is POD.
 fn verify_pack(world: &World, ty: &Type, value: &Pack) -> anyhow::Result<()> {
     let ctx = || format!("while verifying pack {}", Typeref::from(ty));
 
@@ -557,6 +581,8 @@ fn verify_pack(world: &World, ty: &Type, value: &Pack) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Verifies enum invariants: unique names/values, unsigned integer base type, and valid default.
 fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
     let ctx = || format!("while verifying enum {}", Typeref::from(ty));
 
@@ -611,6 +637,8 @@ fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Verifies bitfield invariants: unsigned underlying type, non-overlapping valid ranges, and member types.
 fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()> {
     let ctx = || format!("while verifying bitfld {}", Typeref::from(ty));
 
@@ -660,6 +688,7 @@ fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()>
     Ok(())
 }
 
+/// Verifies that a bitfield member's underlying type is integer-compatible.
 fn verify_bitfield_member_type(world: &World, member: &BitfldMember) -> anyhow::Result<()> {
     let ty = world.lookup(member.underlying);
     let ctx = || format!("while checking {}", Typeref::from(ty));
@@ -683,6 +712,8 @@ fn verify_bitfield_member_type(world: &World, member: &BitfldMember) -> anyhow::
         _ => Err(anyhow!("bitfield members must be primitive integers or enums").context(ctx())),
     }
 }
+
+/// Verifies that a variant has unique discriminants and a valid unsigned tag type.
 fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<()> {
     let ctx = || format!("while verifying variant {}", Typeref::from(ty));
 
@@ -706,6 +737,8 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
 
     Ok(())
 }
+
+/// Verifies that a sequence has unique member names and valid member types.
 fn verify_sequence(world: &World, ty: &Type, value: &Sequence) -> anyhow::Result<()> {
     let ctx = || format!("while verifying sequence {}", Typeref::from(ty));
 
@@ -717,6 +750,8 @@ fn verify_sequence(world: &World, ty: &Type, value: &Sequence) -> anyhow::Result
 
     Ok(())
 }
+
+/// Verifies that a dynamic array has a valid unsigned length type and non-`void` element type.
 fn verify_dynarray(world: &World, ty: &Type, value: &DynamicArray) -> anyhow::Result<()> {
     let ctx = || format!("while verifying dynarray {}", Typeref::from(ty));
 
@@ -728,6 +763,8 @@ fn verify_dynarray(world: &World, ty: &Type, value: &DynamicArray) -> anyhow::Re
 
     Ok(())
 }
+
+/// Verifies that a fixed array has a positive length and a POD element type.
 fn verify_fixarray(world: &World, ty: &Type, value: &FixedArray) -> anyhow::Result<()> {
     let ctx = || format!("while verifying fixarray {}", Typeref::from(ty));
 
@@ -740,6 +777,7 @@ fn verify_fixarray(world: &World, ty: &Type, value: &FixedArray) -> anyhow::Resu
     Ok(())
 }
 
+/// Runs verification across every definition in the `World`.
 fn verify(world: World) -> anyhow::Result<World> {
     for item in world.definitions.values() {
         match &item.kind {
@@ -759,6 +797,7 @@ fn verify(world: World) -> anyhow::Result<World> {
     Ok(world)
 }
 
+/// Compiles an intermediate `Module` into a validated `World` for code generation.
 pub fn compile(module: Module) -> anyhow::Result<World> {
     let mut allocator = TypeIDAllocator::new();
 
@@ -893,6 +932,7 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
     })
 }
 
+/// Returns all direct `TypeID` dependencies referenced by a type.
 fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
     match &ty.kind {
         TypeKind::Alias(alias) => vec![alias.other],
@@ -919,6 +959,7 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
     }
 }
 
+/// Finds an example dependency cycle, if one exists.
 fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum State {
@@ -926,6 +967,7 @@ fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
         Visited,
     }
 
+    /// DFS helper used to reconstruct a cycle path.
     fn dfs(
         node: TypeID,
         defs: &HashMap<TypeID, Type>,
@@ -973,6 +1015,7 @@ fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
     None
 }
 
+/// Produces a stable topological ordering over all definitions.
 fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeID>> {
     let mut indegree: HashMap<TypeID, usize> = HashMap::new();
     let mut dependents: HashMap<TypeID, Vec<TypeID>> = HashMap::new();
@@ -1052,6 +1095,7 @@ mod tests {
     use super::*;
     use crate::intermediate;
 
+    /// Test: overlapping bitfield ranges are rejected.
     #[test]
     fn bitfield_overlap_is_rejected() {
         let src = r#"
@@ -1069,6 +1113,7 @@ bits Bad : u8
         );
     }
 
+    /// Test: dynamic arrays cannot have `void` element types.
     #[test]
     fn dynarray_void_element_is_rejected() {
         let src = r#"
@@ -1081,6 +1126,7 @@ dyn_array Bad : u8 * void
         assert!(msg.contains("void"), "unexpected error message: {msg}");
     }
 
+    /// Test: cyclic type references are rejected.
     #[test]
     fn cycles_are_rejected() {
         let src = r#"
@@ -1097,6 +1143,7 @@ alias B : A
         );
     }
 
+    /// Test: direct self-references are rejected.
     #[test]
     fn self_references_are_rejected() {
         let src = r#"
@@ -1112,6 +1159,7 @@ alias A : A
         );
     }
 
+    /// Test: topological sorting is deterministic and stable.
     #[test]
     fn topological_sort_is_stable() {
         let src = r#"
@@ -1154,6 +1202,7 @@ pack C
         }
     }
 
+    /// Test: unknown type references are rejected.
     #[test]
     fn unknown_types_are_rejected() {
         let src = r#"

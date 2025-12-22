@@ -8,6 +8,7 @@ use crate::compile::{
 
 use super::*;
 
+/// Emits a Rust module for the given compiled `World`.
 pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> Result<()> {
     let ctx = RustContext::new(world, global)?;
 
@@ -28,6 +29,7 @@ enum RustFlavor {
 }
 
 impl RustFlavor {
+    /// Returns the module name used for this flavor (`read` vs `write`).
     fn module_name(self) -> &'static str {
         match self {
             RustFlavor::Read => "read",
@@ -43,6 +45,7 @@ struct RustContext<'a> {
 }
 
 impl<'a> RustContext<'a> {
+    /// Builds a codegen context (name mapping and options).
     fn new(world: &'a World, options: &'a GlobalOptions) -> Result<Self> {
         let mut names = HashMap::new();
         for (id, ty) in world.iter() {
@@ -55,6 +58,7 @@ impl<'a> RustContext<'a> {
         })
     }
 
+    /// Returns the generated Rust identifier for a `TypeID`.
     fn name_of(&self, id: TypeID) -> String {
         self.names
             .get(&id)
@@ -62,10 +66,12 @@ impl<'a> RustContext<'a> {
             .clone()
     }
 
+    /// Iterates types in dependency order.
     fn types(&'a self) -> impl Iterator<Item = (TypeID, &'a Type)> + 'a {
         self.world.iter()
     }
 
+    /// Resolves aliases transitively.
     fn resolve_alias(&self, id: TypeID) -> TypeID {
         let mut cur = id;
         loop {
@@ -77,6 +83,7 @@ impl<'a> RustContext<'a> {
         }
     }
 
+    /// Returns the primitive for a type if it is directly primitive (after alias resolution).
     fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
         let resolved = self.resolve_alias(id);
         match &self.world.lookup(resolved).kind {
@@ -85,6 +92,7 @@ impl<'a> RustContext<'a> {
         }
     }
 
+    /// Returns the primitive for a type following aliases and enums, if any.
     fn underlying_primitive(&self, id: TypeID) -> Option<Primitive> {
         let ty = self.world.lookup(id);
         match &ty.kind {
@@ -95,22 +103,23 @@ impl<'a> RustContext<'a> {
         }
     }
 
-    fn is_pod(&self, id: TypeID) -> bool {
-        let ty = self.world.lookup(id);
-        match &ty.kind {
-            TypeKind::Alias(alias) => self.is_pod(alias.other),
-            TypeKind::Pack(_) => true,
-            TypeKind::Enum(_) => true,
-            TypeKind::Bitfld(_) => true,
-            TypeKind::Variant(_) => false,
-            TypeKind::Sequence(_) => false,
-            TypeKind::DynamicArray(_) => false,
-            TypeKind::FixedArray(fixed) => self.is_pod(fixed.value_type),
-            TypeKind::Primitive(_) => true,
-            TypeKind::Void => false,
-        }
-    }
+    // fn is_pod(&self, id: TypeID) -> bool {
+    //     let ty = self.world.lookup(id);
+    //     match &ty.kind {
+    //         TypeKind::Alias(alias) => self.is_pod(alias.other),
+    //         TypeKind::Pack(_) => true,
+    //         TypeKind::Enum(_) => true,
+    //         TypeKind::Bitfld(_) => true,
+    //         TypeKind::Variant(_) => false,
+    //         TypeKind::Sequence(_) => false,
+    //         TypeKind::DynamicArray(_) => false,
+    //         TypeKind::FixedArray(fixed) => self.is_pod(fixed.value_type),
+    //         TypeKind::Primitive(_) => true,
+    //         TypeKind::Void => false,
+    //     }
+    // }
 
+    /// Returns whether a read-view type requires a lifetime parameter.
     fn view_needs_lifetime(&self, id: TypeID) -> bool {
         let resolved = self.resolve_alias(id);
         let ty = self.world.lookup(resolved);
@@ -132,6 +141,7 @@ impl<'a> RustContext<'a> {
         }
     }
 
+    /// Returns the owned Rust type spelling for a `TypeID`.
     fn rust_type(&self, id: TypeID) -> Result<String> {
         let resolved = self.resolve_alias(id);
         let ty = self.world.lookup(resolved);
@@ -143,6 +153,7 @@ impl<'a> RustContext<'a> {
         Ok(out)
     }
 
+    /// Returns whether an array can use the bulk read/write path, and if so, the element kind.
     fn can_bulk_array(&self, id: TypeID) -> Option<&TypeKind> {
         let ty = self.world.lookup(id);
 
@@ -150,14 +161,18 @@ impl<'a> RustContext<'a> {
             TypeKind::DynamicArray(dynamic_array) => {
                 let elem = self.resolve_alias(dynamic_array.value_type);
                 match &self.world.lookup(elem).kind {
-                    TypeKind::Primitive(_) | TypeKind::Pack(_) => Some(&self.world.lookup(elem).kind),
+                    TypeKind::Primitive(_) | TypeKind::Pack(_) => {
+                        Some(&self.world.lookup(elem).kind)
+                    }
                     _ => None,
                 }
             }
             TypeKind::FixedArray(fixed_array) => {
                 let elem = self.resolve_alias(fixed_array.value_type);
                 match &self.world.lookup(elem).kind {
-                    TypeKind::Primitive(_) | TypeKind::Pack(_) => Some(&self.world.lookup(elem).kind),
+                    TypeKind::Primitive(_) | TypeKind::Pack(_) => {
+                        Some(&self.world.lookup(elem).kind)
+                    }
                     _ => None,
                 }
             }
@@ -165,6 +180,7 @@ impl<'a> RustContext<'a> {
         }
     }
 
+    /// Returns the Rust view type spelling for a `TypeID` using `lifetime`.
     fn rust_view_type(&self, id: TypeID, lifetime: &str) -> Result<String> {
         let resolved = self.resolve_alias(id);
         let ty = self.world.lookup(resolved);
@@ -194,6 +210,7 @@ impl<'a> RustContext<'a> {
         Ok(out)
     }
 
+    /// Returns the underlying view type spelling for an alias target.
     fn rust_view_underlying(&self, id: TypeID, lifetime: &str) -> Result<String> {
         let resolved = self.resolve_alias(id);
         let ty = self.world.lookup(resolved);
@@ -228,6 +245,7 @@ impl<'a> RustContext<'a> {
         Ok(out)
     }
 
+    /// Emits an optional byte-size guard for array parsing when enabled.
     fn insert_optional_size_check(
         &self,
         dest: &mut impl Sink,
@@ -253,6 +271,7 @@ impl<'a> RustContext<'a> {
     }
 }
 
+/// Emits top-level imports and shared helpers for generated Rust.
 fn emit_preamble(out: &mut impl Sink) {
     out.wln("// Generated by jaw. Do not edit.");
     out.wln("use std::io::{self, Read, Write};");
@@ -316,6 +335,7 @@ fn emit_preamble(out: &mut impl Sink) {
     out.newline();
 }
 
+/// Emits a `read` or `write` module (types + impls) for the compiled `World`.
 fn emit_module(ctx: &RustContext, out: &mut impl Sink, flavor: RustFlavor) -> Result<()> {
     out.wln(&format!("pub mod {}", flavor.module_name()));
     {
@@ -340,6 +360,7 @@ fn emit_module(ctx: &RustContext, out: &mut impl Sink, flavor: RustFlavor) -> Re
     Ok(())
 }
 
+/// Emits owned Rust type definitions used by the `read` module.
 fn emit_read_type_definition(
     ctx: &RustContext,
     out: &mut impl Sink,
@@ -516,6 +537,7 @@ fn emit_read_type_definition(
     Ok(())
 }
 
+/// Emits Rust view type definitions used by the `write` module.
 fn emit_write_type_definition(
     ctx: &RustContext,
     out: &mut impl Sink,
@@ -637,6 +659,7 @@ fn emit_write_type_definition(
     Ok(())
 }
 
+/// Emits `read_*` functions for a type.
 fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
@@ -927,6 +950,7 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
     Ok(())
 }
 
+/// Emits `write_*` functions for a type.
 fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
@@ -1123,6 +1147,7 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
     Ok(())
 }
 
+/// Builds a Rust expression string to read a value of `id` from `reader_ident`.
 fn read_expr(ctx: &RustContext, id: TypeID, reader_ident: &str) -> Result<String> {
     let ty = ctx.world.lookup(ctx.resolve_alias(id));
     let expr = match &ty.kind {
@@ -1137,6 +1162,7 @@ fn read_expr(ctx: &RustContext, id: TypeID, reader_ident: &str) -> Result<String
     Ok(expr)
 }
 
+/// Emits Rust statements that write `value_expr` of type `id` into `writer`.
 fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &str) -> Result<()> {
     let ty = ctx.world.lookup(ctx.resolve_alias(id));
     match &ty.kind {
@@ -1167,12 +1193,14 @@ fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &
 }
 
 // Keep variant arm names stable and unique even when payload types repeat.
+/// Computes a stable, unique variant case name.
 fn variant_case_name(ctx: &RustContext, m: &VariantMember, _idx: usize) -> Result<String> {
     let base = ctx.name_of(ctx.resolve_alias(m.ty));
     Ok(sanitize(format!("{base}_{}", m.value)))
 }
 
 // Shared bound for dynamic array length encoding, based on the declared counter type.
+/// Returns the maximum encodable array length for a given size-counter type.
 fn max_len_for_size(ctx: &RustContext, id: TypeID) -> Result<u128> {
     let prim = ctx
         .underlying_primitive(id)
@@ -1186,6 +1214,7 @@ fn max_len_for_size(ctx: &RustContext, id: TypeID) -> Result<u128> {
     }
 }
 
+/// Returns the reader method name for a primitive-compatible type.
 fn read_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> {
     let p = ctx
         .underlying_primitive(id)
@@ -1193,6 +1222,7 @@ fn read_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> 
     read_primitive_method_direct(p)
 }
 
+/// Returns the writer method name for a primitive-compatible type.
 fn write_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str> {
     let p = ctx
         .underlying_primitive(id)
@@ -1200,6 +1230,7 @@ fn write_primitive_method(ctx: &RustContext, id: TypeID) -> Result<&'static str>
     write_primitive_method_direct(p)
 }
 
+/// Returns the reader method name for a specific primitive.
 fn read_primitive_method_direct(p: Primitive) -> Result<&'static str> {
     match (p.dtype, p.sign, p.width) {
         (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok("read_u8"),
@@ -1216,6 +1247,7 @@ fn read_primitive_method_direct(p: Primitive) -> Result<&'static str> {
     }
 }
 
+/// Returns the writer method name for a specific primitive.
 fn write_primitive_method_direct(p: Primitive) -> Result<&'static str> {
     match (p.dtype, p.sign, p.width) {
         (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok("write_u8"),
@@ -1232,6 +1264,7 @@ fn write_primitive_method_direct(p: Primitive) -> Result<&'static str> {
     }
 }
 
+/// Maps a DSL primitive to a Rust primitive type name.
 fn map_primitive(p: Primitive) -> Result<&'static str> {
     let s = match (p.dtype, p.sign, p.width) {
         (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => "u8",
@@ -1249,6 +1282,7 @@ fn map_primitive(p: Primitive) -> Result<&'static str> {
     Ok(s)
 }
 
+/// Sanitizes DSL identifiers into valid Rust identifiers.
 fn sanitize<S: AsRef<str>>(s: S) -> String {
     let raw = s.as_ref();
     let mut out = String::with_capacity(raw.len());

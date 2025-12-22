@@ -8,6 +8,7 @@ use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, Ty
 
 use super::*;
 
+/// Emits a C++ header for the given compiled `World`.
 pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow::Result<()> {
     let ctx = CppContext::new(world, global)?;
 
@@ -48,6 +49,7 @@ enum Namespace {
 }
 
 impl<'a> CppContext<'a> {
+    /// Builds a codegen context (name mapping, namespace, and options).
     fn new(world: &'a World, options: &'a GlobalOptions) -> anyhow::Result<Self> {
         let mut names = HashMap::new();
         for (id, ty) in world.iter() {
@@ -61,6 +63,7 @@ impl<'a> CppContext<'a> {
         })
     }
 
+    /// Returns the generated identifier for a `TypeID` in the given namespace.
     fn name_of(&self, id: TypeID, ns: Namespace) -> String {
         format!(
             "{}{}",
@@ -74,6 +77,7 @@ impl<'a> CppContext<'a> {
         )
     }
 
+    /// Returns the concrete C++ type spelling for a `TypeID` in the given namespace.
     fn cpp_type(&self, id: TypeID, ns: Namespace) -> anyhow::Result<String> {
         let ty = self.world.lookup(id);
         match &ty.kind {
@@ -83,6 +87,7 @@ impl<'a> CppContext<'a> {
         }
     }
 
+    /// Resolves a `TypeID` to a primitive, following aliases and enums.
     fn underlying_primitive(&self, id: TypeID) -> anyhow::Result<Primitive> {
         let ty = self.world.lookup(id);
         match &ty.kind {
@@ -93,10 +98,12 @@ impl<'a> CppContext<'a> {
         }
     }
 
+    /// Iterates types in dependency order.
     fn types(&'a self) -> impl Iterator<Item = (TypeID, &'a Type)> + 'a {
         self.world.iter()
     }
 
+    /// Returns the namespace name for read/write bindings.
     fn namespace_name(&self, ns: Namespace) -> &'static str {
         match ns {
             Namespace::Read => "readers",
@@ -104,6 +111,7 @@ impl<'a> CppContext<'a> {
         }
     }
 
+    /// Resolves aliases transitively.
     fn resolve_alias(&self, id: TypeID) -> TypeID {
         let mut cur = id;
         loop {
@@ -115,26 +123,27 @@ impl<'a> CppContext<'a> {
         }
     }
 
-    fn is_pod(&self, id: TypeID) -> bool {
-        let resolved = self.resolve_alias(id);
-        let ty = self.world.lookup(resolved);
+    // fn is_pod(&self, id: TypeID) -> bool {
+    //     let resolved = self.resolve_alias(id);
+    //     let ty = self.world.lookup(resolved);
 
-        // println!("IS POD {ty:?}");
+    //     // println!("IS POD {ty:?}");
 
-        match &ty.kind {
-            TypeKind::Alias(alias) => self.is_pod(alias.other),
-            TypeKind::Pack(_) => true,
-            TypeKind::Enum(_) => true,
-            TypeKind::Bitfld(_) => true,
-            TypeKind::Variant(_) => false,
-            TypeKind::Sequence(_) => false,
-            TypeKind::DynamicArray(_) => false,
-            TypeKind::FixedArray(fixed_array) => self.is_pod(fixed_array.value_type),
-            TypeKind::Primitive(_) => true,
-            TypeKind::Void => true,
-        }
-    }
+    //     match &ty.kind {
+    //         TypeKind::Alias(alias) => self.is_pod(alias.other),
+    //         TypeKind::Pack(_) => true,
+    //         TypeKind::Enum(_) => true,
+    //         TypeKind::Bitfld(_) => true,
+    //         TypeKind::Variant(_) => false,
+    //         TypeKind::Sequence(_) => false,
+    //         TypeKind::DynamicArray(_) => false,
+    //         TypeKind::FixedArray(fixed_array) => self.is_pod(fixed_array.value_type),
+    //         TypeKind::Primitive(_) => true,
+    //         TypeKind::Void => true,
+    //     }
+    // }
 
+    /// Returns whether an array can use the bulk read/write path.
     fn can_bulk_array(&self, id: TypeID) -> bool {
         let ty = self.world.lookup(id);
 
@@ -159,10 +168,12 @@ impl<'a> CppContext<'a> {
         }
     }
 
+    /// Returns whether a `TypeID` corresponds to `void`.
     fn is_void(&self, id: TypeID) -> bool {
         matches!(&self.world.lookup(id).kind, TypeKind::Void)
     }
 
+    /// Emits an optional byte-size guard for array parsing when enabled.
     fn insert_optional_size_check(
         &self,
         dest: &mut impl Sink,
@@ -184,6 +195,7 @@ impl<'a> CppContext<'a> {
     }
 }
 
+/// Emits header includes and opens the top-level namespace.
 fn emit_preamble(out: &mut Outfile, namespace: &str) -> Result<()> {
     *out += "#pragma once";
     out.wln("#include <array>");
@@ -203,6 +215,7 @@ fn emit_preamble(out: &mut Outfile, namespace: &str) -> Result<()> {
     Ok(())
 }
 
+/// Emits shared helpers (reader/writer concepts and small utilities).
 fn emit_helpers(out: &mut impl Sink) {
     out.wln("template <class Reader>");
     out.wln("inline bool read_bytes(Reader& reader, void* dst, size_t n)");
@@ -304,6 +317,7 @@ fn emit_helpers(out: &mut impl Sink) {
     out.wln(";");
 }
 
+/// Emits forward declarations for all types in the selected namespace.
 fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyhow::Result<()> {
     out.wln(&format!("namespace {} ", ctx.namespace_name(ns)));
     {
@@ -330,6 +344,7 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
     Ok(())
 }
 
+/// Emits type definitions and implementations for all types in the selected namespace.
 fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyhow::Result<()> {
     out.wln(&format!("namespace {} ", ctx.namespace_name(ns)));
     {
@@ -370,6 +385,7 @@ fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyho
     Ok(())
 }
 
+/// Emits a forward declaration for a single type when possible.
 fn emit_type_def_fwd(
     ctx: &CppContext,
     out: &mut impl Sink,
@@ -431,6 +447,7 @@ fn emit_type_def_fwd(
     Ok(())
 }
 
+/// Emits the concrete type definition for a single type.
 fn emit_type_def(
     ctx: &CppContext,
     out: &mut impl Sink,
@@ -564,6 +581,7 @@ fn emit_type_def(
     Ok(())
 }
 
+/// Emits any additional forward declarations needed by a type definition.
 fn emit_forward_decls(out: &mut impl Sink, ty: &Type, ns: Namespace) {
     if matches!(
         ty.kind,
@@ -587,6 +605,7 @@ fn emit_forward_decls(out: &mut impl Sink, ty: &Type, ns: Namespace) {
     }
 }
 
+/// Emits the `read` implementation for a type into the read namespace.
 fn emit_read_impl(
     ctx: &CppContext,
     out: &mut impl Sink,
@@ -795,6 +814,7 @@ fn emit_read_impl(
     Ok(())
 }
 
+/// Emits the `write` implementation for a type into the write namespace.
 fn emit_write_impl(
     ctx: &CppContext,
     out: &mut impl Sink,
@@ -989,6 +1009,7 @@ fn emit_write_impl(
     Ok(())
 }
 
+/// Maps a DSL primitive to a C++ type name.
 fn map_primitive(p: Primitive) -> anyhow::Result<String> {
     let s = match (p.dtype, p.sign, p.width) {
         (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => "std::uint8_t",
@@ -1006,6 +1027,7 @@ fn map_primitive(p: Primitive) -> anyhow::Result<String> {
     Ok(s.into())
 }
 
+/// Sanitizes a DSL identifier into a valid C++ identifier.
 fn sanitize<S: AsRef<str>>(s: S) -> String {
     let raw = s.as_ref();
     let mut out = String::with_capacity(raw.len());
@@ -1023,6 +1045,7 @@ fn sanitize<S: AsRef<str>>(s: S) -> String {
     if out.is_empty() { "_t".into() } else { out }
 }
 
+/// Builds an assignment target expression for a field within `value`.
 fn assign_target(name: &str) -> String {
     format!("value.{}", sanitize(name))
 }

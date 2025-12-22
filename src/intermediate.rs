@@ -5,6 +5,7 @@ use thiserror::Error;
 pub struct SourceCode(pub std::sync::Arc<String>);
 
 impl SourceCode {
+    /// Converts a 0-based line/column pair into a `SourceLocation` bound to this source.
     pub fn location(&self, line: usize, column: usize) -> SourceLocation {
         SourceLocation {
             source: self.clone(),
@@ -12,6 +13,7 @@ impl SourceCode {
         }
     }
 
+    /// Converts a `Position` into a `SourceLocation` bound to this source.
     pub fn position(&self, position: Position) -> SourceLocation {
         SourceLocation {
             source: self.clone(),
@@ -33,12 +35,14 @@ pub struct SourceLocation {
 }
 
 impl SourceLocation {
+    /// Constructs a source location from a source buffer and a position.
     pub fn new(source: SourceCode, position: Position) -> Self {
         Self { source, position }
     }
 }
 
 impl Display for SourceLocation {
+    /// Formats a human-readable snippet (best-effort) for diagnostics.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(line) = self.source.0.lines().nth(self.position.line) {
             if let Some((a, b)) = line.split_at_checked(self.position.column) {
@@ -85,24 +89,28 @@ pub struct TypeName(std::sync::Arc<String>);
 
 impl TypeName {
     #[allow(unused)]
+    /// Returns the underlying string representation of the type name.
     fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 impl Display for TypeName {
+    /// Formats a type name as it appears in the DSL.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
 impl From<&str> for TypeName {
+    /// Creates a `TypeName` from a string slice (trimming whitespace).
     fn from(value: &str) -> Self {
         Self(std::sync::Arc::new(value.trim().into()))
     }
 }
 
 impl From<String> for TypeName {
+    /// Creates a `TypeName` from an owned string (trimming whitespace).
     fn from(value: String) -> Self {
         Self(std::sync::Arc::new(value.trim().into()))
     }
@@ -116,6 +124,7 @@ pub struct StructMember {
 }
 
 impl StructMember {
+    /// Parses a struct-like member line (used by `pack` and `seq`).
     fn parse(
         source: SourceCode,
         input: (usize, String),
@@ -174,6 +183,7 @@ pub struct EnumMember {
 }
 
 impl EnumMember {
+    /// Parses an enum member line (name + `=` value).
     fn parse(
         source: SourceCode,
         input: (usize, String),
@@ -241,6 +251,7 @@ pub struct BitfldMember {
 }
 
 impl BitfldMember {
+    /// Parses a bitfield member line (range + name + `:` type).
     fn parse(
         source: SourceCode,
         input: (usize, String),
@@ -308,6 +319,7 @@ pub struct VariantMember {
 }
 
 impl VariantMember {
+    /// Parses a variant member line (discriminant + `=>` payload type).
     fn parse(
         source: SourceCode,
         input: (usize, String),
@@ -363,28 +375,33 @@ pub struct Variant {
 }
 
 trait HasDefinedAt {
+    /// Returns the source location where this item is defined.
     fn defined_at(&self) -> SourceLocation;
 }
 
 impl HasDefinedAt for StructMember {
+    /// Returns the source location where this member was defined.
     fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for EnumMember {
+    /// Returns the source location where this member was defined.
     fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for BitfldMember {
+    /// Returns the source location where this member was defined.
     fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
 }
 
 impl HasDefinedAt for VariantMember {
+    /// Returns the source location where this member was defined.
     fn defined_at(&self) -> SourceLocation {
         self.defined_at.clone()
     }
@@ -443,6 +460,7 @@ pub struct Module {
 }
 
 impl Module {
+    /// Parses a DSL module from an in-memory string.
     pub fn from_string(name: String, source: String) -> Result<Self, IntermediateError> {
         // TODO remove all these clones
         let mut reader = Reader::new(source.clone());
@@ -584,6 +602,7 @@ struct Reader {
 }
 
 impl Reader {
+    /// Creates a line-oriented reader over the module source.
     fn new(s: String) -> Self {
         Self {
             code: SourceCode(std::sync::Arc::new(s.clone())),
@@ -594,6 +613,7 @@ impl Reader {
         }
     }
 
+    /// Returns the next non-empty, non-comment line along with its 0-based line number.
     fn next_line(&mut self) -> Option<(usize, String)> {
         loop {
             let x = self.source.next();
@@ -618,6 +638,7 @@ impl Reader {
         }
     }
 
+    /// Parses a consecutive block of member lines, returning (members, optional default).
     fn member_iter<Func, U>(
         &mut self,
         mut f: Func,
@@ -653,6 +674,7 @@ impl Reader {
         Ok((ret, def))
     }
 
+    /// Peeks for and consumes the next member line (`-` or `>`), if present.
     fn has_member_start(&mut self) -> Option<(usize, String)> {
         let Some((_, Ok(line))) = self.source.peek() else {
             return None;
@@ -664,6 +686,7 @@ impl Reader {
         }
     }
 
+    /// Parses an `alias` declaration body.
     fn parse_alias(
         &mut self,
         extra: Option<&str>,
@@ -681,6 +704,7 @@ impl Reader {
         }))
     }
 
+    /// Parses a `pack` declaration body.
     fn parse_pack(
         &mut self,
         _extra: Option<&str>,
@@ -700,6 +724,7 @@ impl Reader {
         Ok(TypeKind::Pack(Pack { members }))
     }
 
+    /// Parses a `seq` declaration body.
     fn parse_seq(
         &mut self,
         _extra: Option<&str>,
@@ -717,6 +742,7 @@ impl Reader {
         Ok(TypeKind::Sequence(Sequence { members }))
     }
 
+    /// Parses an `enum` declaration body.
     fn parse_enum(
         &mut self,
         extra: Option<&str>,
@@ -738,6 +764,7 @@ impl Reader {
         }))
     }
 
+    /// Parses a `bits` (bitfield) declaration body.
     fn parse_bitfld(
         &mut self,
         extra: Option<&str>,
@@ -762,6 +789,7 @@ impl Reader {
         Ok(TypeKind::Bitfld(Bitfld { ty, members }))
     }
 
+    /// Parses a `variant` declaration body.
     fn parse_variant(
         &mut self,
         extra: Option<&str>,
@@ -786,6 +814,7 @@ impl Reader {
         Ok(TypeKind::Variant(Variant { ty, members }))
     }
 
+    /// Parses a `fixed_array` declaration body.
     fn parse_fixed_array(
         &mut self,
         extra: Option<&str>,
@@ -818,6 +847,7 @@ impl Reader {
         }))
     }
 
+    /// Parses a `dyn_array` declaration body.
     fn parse_dyn_array(
         &mut self,
         extra: Option<&str>,
@@ -846,15 +876,18 @@ enum MemberType {
     Default,
 }
 
+/// Returns the raw pointer address of a string slice (used for offset computation).
 fn addr_of(s: &str) -> usize {
     s.as_ptr() as usize
 }
 
+/// Splits a string on whitespace while also returning byte offsets for each token.
 fn split_whitespace_indices(s: &str) -> impl Iterator<Item = (usize, &str)> {
     s.split_whitespace()
         .map(move |sub| (addr_of(sub) - addr_of(s), sub))
 }
 
+/// Tokenizes a member line into `(Position, token)` pairs.
 fn make_mem_split(input: &(usize, String)) -> impl Iterator<Item = (Position, &str)> {
     split_whitespace_indices(&input.1).map(|x| {
         (
@@ -867,6 +900,7 @@ fn make_mem_split(input: &(usize, String)) -> impl Iterator<Item = (Position, &s
     })
 }
 
+/// Consumes the member prefix token (`-` normal, `>` default) and returns its meaning.
 fn consume_member_start<'a>(
     code: SourceCode,
     iter: &mut impl Iterator<Item = (Position, &'a str)>,
@@ -886,6 +920,7 @@ fn consume_member_start<'a>(
     }
 }
 
+/// Expects the next token to match `text` and errors otherwise.
 fn demand_string<'a>(
     code: SourceCode,
     iter: &mut impl Iterator<Item = (Position, &'a str)>,
@@ -905,6 +940,7 @@ fn demand_string<'a>(
     }
 }
 
+/// Ensures the member tokenizer has no extra trailing tokens.
 fn demand_done<'a>(
     code: SourceCode,
     mut iter: impl Iterator<Item = (Position, &'a str)>,
@@ -925,6 +961,7 @@ mod tests {
 
     use super::*;
 
+    /// Summarizes struct members as `(name, type)` for assertions.
     fn struct_sig(members: &[StructMember]) -> Vec<(&str, &str)> {
         members
             .iter()
@@ -932,10 +969,12 @@ mod tests {
             .collect()
     }
 
+    /// Summarizes enum members as `(name, value)` for assertions.
     fn enum_sig(members: &[EnumMember]) -> Vec<(&str, i64)> {
         members.iter().map(|m| (m.name.as_str(), m.value)).collect()
     }
 
+    /// Summarizes bitfield members as `(range, name, type)` for assertions.
     fn bit_sig(members: &[BitfldMember]) -> Vec<(&str, &str, &str)> {
         members
             .iter()
@@ -943,10 +982,12 @@ mod tests {
             .collect()
     }
 
+    /// Summarizes variant members as `(discriminant, payload_type)` for assertions.
     fn variant_sig(members: &[VariantMember]) -> Vec<(u64, &str)> {
         members.iter().map(|m| (m.value, m.ty.as_str())).collect()
     }
 
+    /// Test: the example DSL file parses into the expected intermediate AST.
     #[test]
     fn intermediate() {
         let source = include_str!("../assets/example.jaw");
@@ -1102,6 +1143,7 @@ mod tests {
         }
     }
 
+    /// Test: `variant` declarations do not support default members.
     #[test]
     fn variant_default_is_rejected() {
         let source = r#"

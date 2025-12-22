@@ -29,6 +29,7 @@ struct Arguments {
 
 use std::process::ExitCode;
 
+/// Parse CLI args, compile the input module, and emit code for the selected generator.
 fn process() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
@@ -54,6 +55,7 @@ fn process() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// CLI entrypoint; prints errors to stderr and returns a non-zero exit code on failure.
 fn main() -> ExitCode {
     match process() {
         Err(x) => {
