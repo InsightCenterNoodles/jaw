@@ -855,20 +855,23 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
             },
         ];
 
+        let builtin_defined_at = SourceLocation::new(
+            SourceCode(std::sync::Arc::new("builtin".into())),
+            Position { line: 0, column: 0 },
+        );
+
         // Seed the world with builtin primitives/void so user definitions can refer to them.
         let names: Vec<_> = names
             .into_iter()
             .map(|x| {
-                let tname = TypeName::from(x.to_string());
+                let tname =
+                    TypeName::from_string(builtin_defined_at.clone(), x.to_string()).unwrap();
                 (
                     x,
                     allocator.next(),
                     Type {
                         ident: tname,
-                        defined_at: SourceLocation::new(
-                            SourceCode(std::sync::Arc::new("builtin".into())),
-                            Position { line: 0, column: 0 },
-                        ),
+                        defined_at: builtin_defined_at.clone(),
                         kind: TypeKind::Primitive(x),
                     },
                 )
@@ -880,7 +883,7 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
 
         let mut defs: HashMap<_, _> = names.into_iter().map(|x| (x.1, x.2)).collect();
 
-        let void_name: TypeName = "void".into();
+        let void_name = TypeName::from_string(builtin_defined_at, "void").unwrap();
         let void_tid = allocator.next();
 
         name_to_id.insert(void_name.clone(), void_tid);
@@ -1178,14 +1181,11 @@ pack C
         let mut seen_orders = vec![];
 
         for _ in 0..8 {
-            let module =
-                intermediate::Module::from_string("file".into(), src.to_string()).unwrap();
+            let module = intermediate::Module::from_string("file".into(), src.to_string()).unwrap();
             let world = compile(module).expect("compile should succeed");
             let names: Vec<String> = world
                 .iter()
-                .filter(|(_, ty)| {
-                    !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_))
-                })
+                .filter(|(_, ty)| !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_)))
                 .map(|(_, ty)| ty.ident.to_string())
                 .collect();
 

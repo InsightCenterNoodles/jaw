@@ -30,6 +30,8 @@ An example of capabilities is provided in `assets/example.jaw`
 - Dynamic array (variably sized contiguous array):
   - `dyn_array : CountType * Type` reads a count of type `CountType`, then `Type` items
 - Comments in the form of `# ...`
+- Imports (must appear before declarations):
+  - `from path/to/file.jaw use {TypeA, TypeB}`
 
 Generated Code
 - Python: reader/writer helpers and simple data structures. See `generated/python/` examples.

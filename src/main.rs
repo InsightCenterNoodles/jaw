@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use jaw::{GlobalOptions, codegen};
 
@@ -40,9 +41,8 @@ fn process() -> anyhow::Result<()> {
         .unwrap_or("module")
         .to_string();
 
-    let source = std::fs::read_to_string(args.input)?;
-
-    let module = jaw::intermediate::Module::from_string(file_stem, source)?;
+    let module = jaw::intermediate::load_module_with_imports(&args.input)
+        .with_context(|| format!("while loading module {file_stem}"))?;
 
     let world = jaw::compile::compile(module)?;
 

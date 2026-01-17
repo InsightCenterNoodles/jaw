@@ -1,0 +1,9 @@
+from "module_import.jaw" use {NonLocal}
+
+seq Local
+- first : f32
+- second : f64
+
+variant Root : u8
+- 1 => Local
+- 2 => NonLocal
