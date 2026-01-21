@@ -132,13 +132,7 @@ impl Display for TypeName {
 }
 
 fn is_legal_typename_char(c: char) -> bool {
-    match c {
-        'a'..'z' => true,
-        'A'..'Z' => true,
-        '0'..'9' => true,
-        '_' => true,
-        _ => false,
-    }
+    matches!(c, 'a'..'z' | 'A'..'Z' | '0'..'9' | '_')
 }
 
 #[derive(Debug)]

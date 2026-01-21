@@ -441,7 +441,7 @@ fn emit_read_type_definition(
                 {
                     let mut idt = idt.indent();
 
-                    idt.wln(&format!("Self"));
+                    idt.wln("Self");
                     {
                         let mut idt = idt.indent();
                         for item in &pack.members {

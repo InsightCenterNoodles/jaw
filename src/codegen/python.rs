@@ -635,9 +635,7 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             out.wln(&format!("def write_{name}(writer, values):"));
             let mut idt = out.indent();
             let max_len = max_len_for_size(ctx, arr.size_type)?;
-            idt.wln(&format!(
-                "# Fail instead of truncating if the list does not fit in the count type."
-            ));
+            idt.wln("# Fail instead of truncating if the list does not fit in the count type.");
             idt.wln(&format!(
                 "if len(values) > {}: raise ValueError('array length too large to encode')",
                 max_len
