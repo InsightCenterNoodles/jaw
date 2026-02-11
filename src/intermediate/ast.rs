@@ -49,7 +49,7 @@ pub struct Pack {
     pub members: Vec<StructMember>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EnumMember {
     pub name: String,
     pub value: i64,

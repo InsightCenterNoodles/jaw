@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use clap::{Parser, ValueEnum};
-use jaw::{GlobalOptions, codegen};
+use jaw::{GlobalOptions, codegen, compile};
 
 #[derive(Debug, Clone, ValueEnum)]
 enum GeneratorKind {
@@ -35,6 +35,8 @@ use std::process::ExitCode;
 fn process() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
+    let mut world: Option<compile::World> = None;
+
     for input in args.inputs {
         let file_stem = input
             .file_stem()
@@ -42,11 +44,21 @@ fn process() -> anyhow::Result<()> {
             .unwrap_or("module")
             .to_string();
 
-        let module = jaw::intermediate::load_module_with_imports(&args.input)
+        let module = jaw::intermediate::load_module_with_imports(&input)
             .with_context(|| format!("while loading module {file_stem}"))?;
 
-        let world = jaw::compile::compile(module)?;
+        let this_world = jaw::compile::compile(module)?;
+
+        if let Some(w) = world {
+            world = Some(w.merge(this_world)?)
+        } else {
+            world = Some(this_world);
+        }
     }
+
+    let Some(world) = world else {
+        bail!("At least one module is required");
+    };
 
     match args.kind {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,

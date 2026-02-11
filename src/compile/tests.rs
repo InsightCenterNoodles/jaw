@@ -120,3 +120,84 @@ alias A : Missing
         "unexpected error message, wanted type name: {msg}"
     );
 }
+
+/// Test: merge worlds
+#[test]
+fn merge_world_basic() {
+    let world_1 = World {
+        definitions: [(
+            TypeID(100),
+            Type {
+                ident: TypeName::from_string(Default::default(), "type_1").unwrap(),
+                defined_at: Default::default(),
+                kind: TypeKind::Primitive(Primitive {
+                    width: BitWidth::W8,
+                    sign: Signedness::Signed,
+                    dtype: Datatype::Integer,
+                }),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        sorted: vec![TypeID(100)],
+        module_name: "test1".into(),
+    };
+
+    let world_2 = World {
+        definitions: [(
+            TypeID(200),
+            Type {
+                ident: TypeName::from_string(Default::default(), "type_2").unwrap(),
+                defined_at: Default::default(),
+                kind: TypeKind::Primitive(Primitive {
+                    width: BitWidth::W8,
+                    sign: Signedness::Signed,
+                    dtype: Datatype::Integer,
+                }),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        sorted: vec![TypeID(200)],
+        module_name: "test2".into(),
+    };
+
+    let merge_truth = World {
+        definitions: [
+            (
+                TypeID(100),
+                Type {
+                    ident: TypeName::from_string(Default::default(), "type_1").unwrap(),
+                    defined_at: Default::default(),
+                    kind: TypeKind::Primitive(Primitive {
+                        width: BitWidth::W8,
+                        sign: Signedness::Signed,
+                        dtype: Datatype::Integer,
+                    }),
+                },
+            ),
+            (
+                TypeID(300),
+                Type {
+                    ident: TypeName::from_string(Default::default(), "type_2").unwrap(),
+                    defined_at: Default::default(),
+                    kind: TypeKind::Primitive(Primitive {
+                        width: BitWidth::W8,
+                        sign: Signedness::Signed,
+                        dtype: Datatype::Integer,
+                    }),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        sorted: vec![TypeID(100), TypeID(300)],
+        module_name: "test1".into(),
+    };
+
+    let merge = world_1.merge(world_2).expect("merge worlds");
+
+    assert_eq!(merge.sorted, merge_truth.sorted);
+    assert_eq!(merge.definitions, merge_truth.definitions);
+    assert_eq!(merge.module_name, merge_truth.module_name);
+}

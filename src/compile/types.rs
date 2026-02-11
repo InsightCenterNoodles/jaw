@@ -1,12 +1,11 @@
-use std::{
-    fmt::Display,
-    ops::RangeInclusive,
-    collections::HashMap,
-};
+use std::{collections::HashMap, fmt::Display, ops::RangeInclusive};
+
+use anyhow::bail;
+use itertools::Itertools;
 
 use crate::intermediate::{EnumMember, SourceLocation, TypeName};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructMember {
     pub name: String,
     pub ty: TypeID,
@@ -14,20 +13,20 @@ pub struct StructMember {
 }
 
 /// Plain-old-data aggregate with C-like layout.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Pack {
     pub members: Vec<StructMember>,
 }
 
 /// Enum with an explicit primitive underlying type.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Enum {
     pub underlying: TypeID,
     pub members: Vec<EnumMember>,
     pub default: Option<EnumMember>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BitfldMember {
     pub name: String,
     pub underlying: TypeID,
@@ -36,13 +35,13 @@ pub struct BitfldMember {
 }
 
 /// Bitfield backed by an integer/enum type with named bit ranges.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bitfld {
     pub underlying: TypeID,
     pub members: Vec<BitfldMember>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VariantMember {
     pub ty: TypeID,
     pub value: u64,
@@ -50,25 +49,25 @@ pub struct VariantMember {
 }
 
 /// Tagged union where the discriminant has a primitive integer type.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub discriminant: TypeID,
     pub members: Vec<VariantMember>,
 }
 
 /// Sequence of named fields (a typical record/struct).
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Sequence {
     pub members: Vec<StructMember>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Alias {
     pub other: TypeID,
 }
 
 /// Array kinds
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DynamicArray {
     pub size_type: TypeID,
     pub value_type: TypeID,
@@ -81,7 +80,7 @@ impl DynamicArray {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FixedArray {
     pub count: u64,
     pub value_type: TypeID,
@@ -94,7 +93,7 @@ impl FixedArray {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BitWidth {
     W8,
     W16,
@@ -108,13 +107,13 @@ pub enum Signedness {
     Signed,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Datatype {
     Integer,
     Float,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Primitive {
     pub width: BitWidth,
     pub sign: Signedness,
@@ -184,7 +183,7 @@ impl Display for Primitive {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
     Alias(Alias),
     Pack(Pack),
@@ -198,7 +197,7 @@ pub enum TypeKind {
     Void,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub ident: TypeName,
     pub defined_at: SourceLocation,
@@ -225,8 +224,9 @@ impl Type {
 
 // Ordered so we can use TypeIDs directly as stable sort keys.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct TypeID(u32);
+pub struct TypeID(pub u32);
 
+/// A compiled jaw module
 #[derive(Debug)]
 pub struct World {
     pub(crate) definitions: HashMap<TypeID, Type>,
@@ -250,5 +250,113 @@ impl World {
     /// Returns the module name from the parsed input.
     pub fn module_name(&self) -> &str {
         &self.module_name
+    }
+
+    pub fn merge(self, mut other: World) -> anyhow::Result<World> {
+        // check if we can actually merge
+        for dup in self
+            .definitions
+            .values()
+            .chain(other.definitions.values())
+            .duplicates_by(|t| t.ident.clone())
+            .cloned()
+        {
+            if matches!(dup.kind, TypeKind::Void | TypeKind::Primitive(_)) {
+                continue;
+            }
+
+            // Find first def in self. Dups are detected in other
+
+            let orig = self
+                .definitions
+                .values()
+                .find(|x| x.ident == dup.ident)
+                .expect("duplicated detected, but no duplicate found?");
+
+            bail!(
+                "type {} has conflicting definitions, first found at: {}, second found at: {}",
+                dup.ident,
+                orig.defined_at,
+                dup.defined_at
+            );
+        }
+
+        // ok, now execute merge
+
+        // first we need a new type id offset
+
+        let Some(max_tid) = self.sorted.iter().max().cloned() else {
+            bail!("unable to remap type id while merging modules");
+        };
+
+        let new_base = max_tid.0;
+
+        let remap = |id: &mut TypeID| id.0 += new_base;
+
+        for x in &mut other.sorted {
+            remap(x);
+        }
+
+        other.definitions = other
+            .definitions
+            .into_iter()
+            .map(|(mut k, mut v)| {
+                match &mut v.kind {
+                    TypeKind::Alias(alias) => remap(&mut alias.other),
+                    TypeKind::Pack(pack) => {
+                        for m in &mut pack.members {
+                            remap(&mut m.ty);
+                        }
+                    }
+                    TypeKind::Enum(x) => remap(&mut x.underlying),
+                    TypeKind::Bitfld(bitfld) => {
+                        remap(&mut bitfld.underlying);
+
+                        for x in &mut bitfld.members {
+                            remap(&mut x.underlying);
+                        }
+                    }
+                    TypeKind::Variant(variant) => {
+                        remap(&mut variant.discriminant);
+
+                        for x in &mut variant.members {
+                            remap(&mut x.ty);
+                        }
+                    }
+                    TypeKind::Sequence(sequence) => {
+                        for x in &mut sequence.members {
+                            remap(&mut x.ty);
+                        }
+                    }
+                    TypeKind::DynamicArray(dynamic_array) => {
+                        remap(&mut dynamic_array.size_type);
+                        remap(&mut dynamic_array.value_type);
+                    }
+                    TypeKind::FixedArray(fixed_array) => {
+                        remap(&mut fixed_array.value_type);
+                    }
+                    TypeKind::Primitive(_) => {}
+                    TypeKind::Void => {}
+                };
+
+                remap(&mut k);
+
+                (k, v)
+            })
+            .collect();
+
+        Ok(World {
+            definitions: self
+                .definitions
+                .into_iter()
+                .chain(other.definitions.into_iter())
+                .collect(),
+            sorted: self
+                .sorted
+                .into_iter()
+                .chain(other.sorted.into_iter())
+                .collect(),
+            module_name: self.module_name,
+        })
     }
 }
