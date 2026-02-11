@@ -14,18 +14,19 @@ enum GeneratorKind {
 #[derive(Debug, clap::Parser)]
 #[command(version, about)]
 struct Arguments {
-    /// Input *.jaw file
-    input: PathBuf,
+    /// Output path, based on input
+    output: PathBuf,
 
     /// Type of code to generate
     #[arg(short, long, value_enum, default_value = "cpp")]
     kind: GeneratorKind,
 
-    /// Output path, based on input
-    output: PathBuf,
-
     #[command(flatten)]
     options: GlobalOptions,
+
+    /// Input *.jaw files. Multiple inputs are merged into a single output module.
+    #[arg(required = true)]
+    inputs: Vec<PathBuf>,
 }
 
 use std::process::ExitCode;
@@ -34,17 +35,18 @@ use std::process::ExitCode;
 fn process() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
-    let file_stem = args
-        .input
-        .file_stem()
-        .and_then(|x| x.to_str())
-        .unwrap_or("module")
-        .to_string();
+    for input in args.inputs {
+        let file_stem = input
+            .file_stem()
+            .and_then(|x| x.to_str())
+            .unwrap_or("module")
+            .to_string();
 
-    let module = jaw::intermediate::load_module_with_imports(&args.input)
-        .with_context(|| format!("while loading module {file_stem}"))?;
+        let module = jaw::intermediate::load_module_with_imports(&args.input)
+            .with_context(|| format!("while loading module {file_stem}"))?;
 
-    let world = jaw::compile::compile(module)?;
+        let world = jaw::compile::compile(module)?;
+    }
 
     match args.kind {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,
