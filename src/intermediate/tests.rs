@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use super::*;
 
@@ -231,10 +232,28 @@ pack Local
     assert_eq!(module.imports.len(), 1);
     let imp = &module.imports[0];
     assert_eq!(imp.path, "other.jaw");
+    assert!(!imp.import_all);
     assert_eq!(
         imp.types.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         vec!["Thing", "OtherThing"]
     );
+}
+
+/// Test: wildcard imports are parsed.
+#[test]
+fn wildcard_imports_are_parsed() {
+    let source = r#"
+from "other.jaw" use *
+pack Local
+- a : u8
+"#;
+
+    let module = Module::from_string("file".into(), source.into()).unwrap();
+    assert_eq!(module.imports.len(), 1);
+    let imp = &module.imports[0];
+    assert_eq!(imp.path, "other.jaw");
+    assert!(imp.import_all);
+    assert!(imp.types.is_empty());
 }
 
 /// Test: imports must appear before declarations.
@@ -250,4 +269,54 @@ from "other.jaw" use {Thing}
     let IntermediateError::ImportAfterDeclaration { .. } = err else {
         panic!("unexpected error kind: {err:?}");
     };
+}
+
+fn unique_test_dir(name: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("jaw_{name}_{}_{}", std::process::id(), stamp))
+}
+
+/// Test: wildcard imports pull all top-level definitions from the imported module.
+#[test]
+fn wildcard_imports_load_all_types() {
+    let dir = unique_test_dir("wildcard_imports");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let common_path = dir.join("common.jaw");
+    let root_path = dir.join("root.jaw");
+
+    std::fs::write(
+        &common_path,
+        r#"
+pack CommonA
+- field : u8
+
+seq CommonB
+- value : CommonA
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        &root_path,
+        r#"
+from "common.jaw" use *
+
+seq Local
+- first : CommonA
+- second : CommonB
+"#,
+    )
+    .unwrap();
+
+    let module = load_module_with_imports(&root_path).unwrap();
+    let names: Vec<&str> = module.definitions.iter().map(|d| d.ident.as_str()).collect();
+    assert!(names.contains(&"Local"));
+    assert!(names.contains(&"CommonA"));
+    assert!(names.contains(&"CommonB"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

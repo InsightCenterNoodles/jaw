@@ -141,3 +141,28 @@ dyn_array ObjArr : u32 * MyPOD
     assert!(cpp_src.contains("const uint64_t byte_limit = 16ULL;"));
     let _ = fs::remove_file(&cpp_out);
 }
+
+#[test]
+fn rust_write_variant_payload_reference_has_declared_lifetime() {
+    let world = world_from(
+        r#"
+pack P
+- a : u8
+
+variant V : u8
+- 1 => P
+"#,
+    );
+
+    let rust_out = temp_path("rust_variant_payload_lt", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+
+    assert!(rust_src.contains("pub enum V<'a>"));
+    assert!(
+        rust_src.contains("P_1(&'a P),"),
+        "write variant payload reference should use the enum lifetime"
+    );
+
+    let _ = fs::remove_file(&rust_out);
+}

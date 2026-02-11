@@ -150,6 +150,7 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub struct Import {
     pub path: String,
+    pub import_all: bool,
     pub types: Vec<TypeName>,
     pub defined_at: SourceLocation,
 }

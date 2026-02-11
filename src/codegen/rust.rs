@@ -615,7 +615,10 @@ fn emit_write_type_definition(
             out.newline();
         }
         TypeKind::Variant(variant) => {
-            let needs_lt = ctx.view_needs_lifetime(id);
+            let has_ref_payload = variant.members.iter().any(|m| {
+                !matches!(ctx.world.lookup(ctx.resolve_alias(m.ty)).kind, TypeKind::Void)
+            });
+            let needs_lt = has_ref_payload || ctx.view_needs_lifetime(id);
             let lt = if needs_lt { "<'a>" } else { "" };
             out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
             out.wln(&format!("pub enum {name}{lt}"));

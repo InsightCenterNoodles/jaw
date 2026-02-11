@@ -352,7 +352,7 @@ impl Module {
     }
 }
 
-/// Parses a `from <path> use {Type, ...}` import line.
+/// Parses a `from <path> use {Type, ...}` or `from <path> use *` import line.
 fn parse_import_line(
     code: &SourceCode,
     line: usize,
@@ -424,35 +424,42 @@ fn parse_import_line(
 
     let list_start = use_pos + "use".len();
     let list = text[list_start..].trim();
-    let inner = list
-        .strip_prefix('{')
-        .and_then(|v| v.strip_suffix('}'))
-        .ok_or_else(|| IntermediateError::InvalidImport {
-            line: code.location(line, list_start),
-            reason: "expected `{...}` type list".into(),
-        })?;
-
+    let mut import_all = false;
     let mut types = Vec::new();
-    for item in inner.split(',') {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        types.push(TypeName::from_string(
-            code.location(line, list_start),
-            trimmed,
-        )?);
-    }
 
-    if types.is_empty() {
-        return Err(IntermediateError::InvalidImport {
-            line: code.location(line, text.find('{').unwrap_or_default()),
-            reason: "import list may not be empty".into(),
-        });
+    if list == "*" {
+        import_all = true;
+    } else {
+        let inner = list
+            .strip_prefix('{')
+            .and_then(|v| v.strip_suffix('}'))
+            .ok_or_else(|| IntermediateError::InvalidImport {
+                line: code.location(line, list_start),
+                reason: "expected `{...}` type list or `*`".into(),
+            })?;
+
+        for item in inner.split(',') {
+            let trimmed = item.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            types.push(TypeName::from_string(
+                code.location(line, list_start),
+                trimmed,
+            )?);
+        }
+
+        if types.is_empty() {
+            return Err(IntermediateError::InvalidImport {
+                line: code.location(line, text.find('{').unwrap_or_default()),
+                reason: "import list may not be empty".into(),
+            });
+        }
     }
 
     Ok(Import {
         path: path.into(),
+        import_all,
         types,
         defined_at: code.location(line, 0),
     })

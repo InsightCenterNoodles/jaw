@@ -76,6 +76,13 @@ pub fn load_module_with_imports(path: impl AsRef<Path>) -> anyhow::Result<Module
             );
         };
 
+        if imp.import_all {
+            for def in &module_entries[module_idx].1.definitions {
+                explicit_imports.insert(def.ident.clone());
+            }
+            continue;
+        }
+
         for ty in &imp.types {
             match index.get(ty) {
                 Some((ty_mod_idx, _)) if *ty_mod_idx == module_idx => {

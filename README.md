@@ -32,6 +32,7 @@ An example of capabilities is provided in `assets/example.jaw`
 - Comments in the form of `# ...`
 - Imports (must appear before declarations):
   - `from path/to/file.jaw use {TypeA, TypeB}`
+  - `from path/to/file.jaw use *`
 
 Generated Code
 - Python: reader/writer helpers and simple data structures. See `generated/python/` examples.
