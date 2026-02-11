@@ -5,8 +5,12 @@ use std::{
 
 use super::{Type, TypeID, TypeKind};
 
-/// Returns all direct `TypeID` dependencies referenced by a type.
-fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
+/// Returns all layout-affecting `TypeID` dependencies referenced by a type.
+///
+/// Dependencies that only introduce indirection (e.g., dynamic array element types)
+/// are intentionally excluded so recursive definitions like `Any -> AnyArray -> Any`
+/// can be represented safely.
+fn layout_dependencies(ty: &Type) -> Vec<TypeID> {
     match &ty.kind {
         TypeKind::Alias(alias) => vec![alias.other],
         TypeKind::Pack(pack) => pack.members.iter().map(|m| m.ty).collect(),
@@ -24,9 +28,7 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeID> {
             deps
         }
         TypeKind::Sequence(sequence) => sequence.members.iter().map(|m| m.ty).collect(),
-        TypeKind::DynamicArray(dynamic_array) => {
-            vec![dynamic_array.size_type, dynamic_array.value_type]
-        }
+        TypeKind::DynamicArray(dynamic_array) => vec![dynamic_array.size_type],
         TypeKind::FixedArray(fixed_array) => vec![fixed_array.value_type],
         TypeKind::Primitive(_) | TypeKind::Void => Vec::new(),
     }
@@ -51,7 +53,7 @@ fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
         stack.push(node);
 
         let ty = defs.get(&node)?;
-        for dep in direct_dependencies(ty) {
+        for dep in layout_dependencies(ty) {
             if !defs.contains_key(&dep) {
                 continue;
             }
@@ -107,7 +109,7 @@ pub(super) fn toposort(defs: &HashMap<TypeID, Type>) -> anyhow::Result<Vec<TypeI
             .expect("type id inserted into indegree without definition");
 
         let mut seen = HashSet::new();
-        for dep in direct_dependencies(ty) {
+        for dep in layout_dependencies(ty) {
             if !defs.contains_key(&dep) {
                 continue;
             }

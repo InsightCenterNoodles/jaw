@@ -65,6 +65,34 @@ alias A : A
     );
 }
 
+/// Test: recursive types through dynamic arrays are allowed.
+#[test]
+fn dynarray_cycles_are_allowed() {
+    let src = r#"
+dyn_array AnyBytes : u32 * u8
+dyn_array AnyString : u32 * u8
+dyn_array AnyArray : u32 * Any
+dyn_array AnyMap : u32 * AnyKeyPair
+
+seq AnyKeyPair
+- key : Any
+- value : Any
+
+variant Any : u8
+- 0 => void
+- 1 => u8
+- 2 => i64
+- 3 => f64
+- 4 => AnyString
+- 5 => AnyArray
+- 6 => AnyMap
+- 7 => AnyBytes
+"#;
+
+    let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+    compile(module).expect("compile should accept dynarray-based recursion");
+}
+
 /// Test: topological sorting is deterministic and stable.
 #[test]
 fn topological_sort_is_stable() {

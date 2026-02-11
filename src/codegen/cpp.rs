@@ -323,8 +323,27 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
     {
         let mut block = out.indent();
 
+        // First emit forward declarations for concrete types so aliases can reference them.
         for (id, ty) in ctx.types() {
-            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
+            if matches!(
+                ty.kind,
+                TypeKind::Primitive(_)
+                    | TypeKind::Void
+                    | TypeKind::Alias(_)
+                    | TypeKind::DynamicArray(_)
+                    | TypeKind::FixedArray(_)
+            ) {
+                continue;
+            }
+            emit_type_def_fwd(ctx, &mut block, id, ty, ns)?;
+        }
+
+        // Then emit alias-like type definitions (including arrays) after the forward decls.
+        for (id, ty) in ctx.types() {
+            if !matches!(
+                ty.kind,
+                TypeKind::Alias(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_)
+            ) {
                 continue;
             }
             emit_type_def_fwd(ctx, &mut block, id, ty, ns)?;

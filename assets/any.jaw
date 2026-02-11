@@ -1,0 +1,18 @@
+dyn_array AnyBytes : u32 * u8
+dyn_array AnyString : u32 * u8 # UTF-8
+dyn_array AnyArray : u32 * Any
+dyn_array AnyMap : u32 * AnyKeyPair
+
+seq AnyKeyPair
+- key : Any
+- value : Any
+
+variant Any : u8
+- 0 => void
+- 1 => u8
+- 2 => i64
+- 3 => f64
+- 4 => AnyString
+- 5 => AnyArray
+- 6 => AnyMap
+- 7 => AnyBytes
