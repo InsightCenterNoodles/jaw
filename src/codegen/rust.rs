@@ -103,22 +103,6 @@ impl<'a> RustContext<'a> {
         }
     }
 
-    // fn is_pod(&self, id: TypeID) -> bool {
-    //     let ty = self.world.lookup(id);
-    //     match &ty.kind {
-    //         TypeKind::Alias(alias) => self.is_pod(alias.other),
-    //         TypeKind::Pack(_) => true,
-    //         TypeKind::Enum(_) => true,
-    //         TypeKind::Bitfld(_) => true,
-    //         TypeKind::Variant(_) => false,
-    //         TypeKind::Sequence(_) => false,
-    //         TypeKind::DynamicArray(_) => false,
-    //         TypeKind::FixedArray(fixed) => self.is_pod(fixed.value_type),
-    //         TypeKind::Primitive(_) => true,
-    //         TypeKind::Void => false,
-    //     }
-    // }
-
     /// Returns whether a read-view type requires a lifetime parameter.
     fn view_needs_lifetime(&self, id: TypeID) -> bool {
         let resolved = self.resolve_alias(id);
@@ -526,8 +510,8 @@ fn emit_read_type_definition(
             out.wln(&format!("pub enum {name}"));
             {
                 let mut idt = out.indent();
-                for (idx, m) in variant.members.iter().enumerate() {
-                    let case_name = variant_case_name(ctx, m, idx)?;
+                for m in &variant.members {
+                    let case_name = variant_case_name(ctx, m)?;
                     let payload = if matches!(
                         ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
                         TypeKind::Void
@@ -653,8 +637,8 @@ fn emit_write_type_definition(
             out.wln(&format!("pub enum {name}{lt}"));
             {
                 let mut idt = out.indent();
-                for (idx, m) in variant.members.iter().enumerate() {
-                    let case_name = variant_case_name(ctx, m, idx)?;
+                for m in &variant.members {
+                    let case_name = variant_case_name(ctx, m)?;
                     let payload = if matches!(
                         ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
                         TypeKind::Void
@@ -705,7 +689,10 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
             ));
             {
                 let mut idt = out.indent();
-                idt.wln(&format!("let inner = {}?;", read_expr(ctx, alias.other, "reader")?));
+                idt.wln(&format!(
+                    "let inner = {}?;",
+                    read_expr(ctx, alias.other, "reader")?
+                ));
                 idt.wln(&format!("Ok({name}(inner))"));
             }
             out.newline();
@@ -868,8 +855,8 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
                 idt.wln("match tag");
                 {
                     let mut mtch = idt.indent();
-                    for (idx, m) in variant.members.iter().enumerate() {
-                        let case_name = variant_case_name(ctx, m, idx)?;
+                    for m in &variant.members {
+                        let case_name = variant_case_name(ctx, m)?;
                         mtch.wln(&format!("{} => ", m.value));
                         {
                             let mut body = mtch.indent();
@@ -1092,8 +1079,8 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
                 idt.wln("match value");
                 {
                     let mut mtch = idt.indent();
-                    for (idx, m) in variant.members.iter().enumerate() {
-                        let case_name = variant_case_name(ctx, m, idx)?;
+                    for m in &variant.members {
+                        let case_name = variant_case_name(ctx, m)?;
                         let is_void = matches!(
                             ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
                             TypeKind::Void
@@ -1214,7 +1201,10 @@ fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &
         }
         TypeKind::Void => {}
         TypeKind::Alias(_) => {
-            out.wln(&format!("write_{}(writer, {value_expr})?;", ctx.name_of(id)));
+            out.wln(&format!(
+                "write_{}(writer, {value_expr})?;",
+                ctx.name_of(id)
+            ));
         }
         TypeKind::Enum(enm) => {
             let method = write_primitive_method(ctx, enm.underlying)?;
@@ -1238,7 +1228,7 @@ fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &
 
 // Keep variant arm names stable and unique even when payload types repeat.
 /// Computes a stable, unique variant case name.
-fn variant_case_name(ctx: &RustContext, m: &VariantMember, _idx: usize) -> Result<String> {
+fn variant_case_name(ctx: &RustContext, m: &VariantMember) -> Result<String> {
     let base = ctx.name_of(ctx.resolve_alias(m.ty));
     Ok(sanitize(format!("{base}_{}", m.value)))
 }
