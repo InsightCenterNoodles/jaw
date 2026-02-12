@@ -137,3 +137,52 @@ fixed_array MyPODFixedList : 8 * MyPOD
 
     let _ = fs::remove_file(&cpp_out);
 }
+
+#[test]
+fn rust_aliases_are_emitted_as_newtypes() {
+    let world = world_from(
+        r#"
+alias ByteAlias : u8
+dyn_array Bytes : u16 * u8
+alias BytesAlias : Bytes
+
+seq Wrap
+- a : ByteAlias
+- b : BytesAlias
+"#,
+    );
+
+    let rust_out = temp_path("rust_alias_newtypes", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+
+    assert!(rust_src.contains("pub struct ByteAlias(pub u8);"));
+    assert!(rust_src.contains("pub struct BytesAlias(pub Bytes);"));
+    assert!(rust_src.contains("pub struct BytesAlias<'a>(pub BytesView<'a>);"));
+    assert!(rust_src.contains("pub fn read_ByteAlias<R: Read>(reader: &mut R) -> io::Result<ByteAlias>"));
+    assert!(
+        rust_src.contains("pub fn write_BytesAlias<W: Write>(writer: &mut W, value: &BytesAlias<'_>) -> io::Result<()>")
+    );
+
+    let _ = fs::remove_file(&rust_out);
+}
+
+#[test]
+fn rust_read_arrays_preserve_alias_element_types() {
+    let world = world_from(
+        r#"
+alias Elem : u8
+dyn_array DynElems : u16 * Elem
+fixed_array FixedElems : 4 * Elem
+"#,
+    );
+
+    let rust_out = temp_path("rust_alias_array_read_types", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+
+    assert!(rust_src.contains("pub fn read_DynElems<R: Read>(reader: &mut R) -> io::Result<Vec<Elem>>"));
+    assert!(rust_src.contains("pub fn read_FixedElems<R: Read>(reader: &mut R) -> io::Result<[Elem; 4]>"));
+
+    let _ = fs::remove_file(&rust_out);
+}

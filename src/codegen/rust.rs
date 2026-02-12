@@ -153,12 +153,30 @@ impl<'a> RustContext<'a> {
         Ok(out)
     }
 
+    /// Returns the read-module declaration type for `id`, preserving alias names.
+    fn rust_read_decl_type(&self, id: TypeID) -> Result<String> {
+        let ty = self.world.lookup(id);
+        let out = match &ty.kind {
+            TypeKind::Primitive(p) => map_primitive(*p)?.to_string(),
+            TypeKind::Void => "()".into(),
+            TypeKind::Alias(_) => self.name_of(id),
+            _ => self.name_of(self.resolve_alias(id)),
+        };
+        Ok(out)
+    }
+
     /// Returns whether an array can use the bulk read/write path, and if so, the element kind.
     fn can_bulk_array(&self, id: TypeID) -> Option<&TypeKind> {
         let ty = self.world.lookup(id);
 
         match &ty.kind {
             TypeKind::DynamicArray(dynamic_array) => {
+                if matches!(
+                    self.world.lookup(dynamic_array.value_type).kind,
+                    TypeKind::Alias(_)
+                ) {
+                    return None;
+                }
                 let elem = self.resolve_alias(dynamic_array.value_type);
                 match &self.world.lookup(elem).kind {
                     TypeKind::Primitive(_) | TypeKind::Pack(_) => {
@@ -168,6 +186,12 @@ impl<'a> RustContext<'a> {
                 }
             }
             TypeKind::FixedArray(fixed_array) => {
+                if matches!(
+                    self.world.lookup(fixed_array.value_type).kind,
+                    TypeKind::Alias(_)
+                ) {
+                    return None;
+                }
                 let elem = self.resolve_alias(fixed_array.value_type);
                 match &self.world.lookup(elem).kind {
                     TypeKind::Primitive(_) | TypeKind::Pack(_) => {
@@ -210,37 +234,35 @@ impl<'a> RustContext<'a> {
         Ok(out)
     }
 
-    /// Returns the underlying view type spelling for an alias target.
-    fn rust_view_underlying(&self, id: TypeID, lifetime: &str) -> Result<String> {
-        let resolved = self.resolve_alias(id);
-        let ty = self.world.lookup(resolved);
-        let name = self.name_of(resolved);
-        let needs_lt = self.view_needs_lifetime(resolved);
-        let lt_suffix = if needs_lt {
-            format!("<{lifetime}>")
-        } else {
-            String::new()
-        };
-
+    /// Returns the write-module declaration type for `id`, preserving alias names.
+    fn rust_write_decl_type(&self, id: TypeID, lifetime: &str) -> Result<String> {
+        let ty = self.world.lookup(id);
         let out = match &ty.kind {
             TypeKind::Primitive(p) => map_primitive(*p)?.to_string(),
             TypeKind::Void => "()".into(),
-            TypeKind::Enum(_) => name,
-            TypeKind::Bitfld(_)
-            | TypeKind::Pack(_)
-            | TypeKind::Sequence(_)
-            | TypeKind::Variant(_) => {
-                format!("{name}{lt_suffix}")
+            TypeKind::Alias(_) => {
+                let name = self.name_of(id);
+                if self.view_needs_lifetime(id) {
+                    format!("{name}<{lifetime}>")
+                } else {
+                    name
+                }
             }
-            TypeKind::DynamicArray(arr) => {
-                let elem = self.rust_view_type(arr.value_type, lifetime)?;
-                format!("&{lifetime} [{elem}]")
+            TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) => {
+                self.name_of(self.resolve_alias(id))
             }
-            TypeKind::FixedArray(arr) => {
-                let elem = self.rust_view_type(arr.value_type, lifetime)?;
-                format!("&{lifetime} [{elem}]")
+            TypeKind::Sequence(_) | TypeKind::Variant(_) => {
+                let resolved = self.resolve_alias(id);
+                let name = self.name_of(resolved);
+                if self.view_needs_lifetime(id) {
+                    format!("{name}<{lifetime}>")
+                } else {
+                    name
+                }
             }
-            TypeKind::Alias(_) => unreachable!("aliases resolved earlier"),
+            TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
+                format!("{}View<{lifetime}>", self.name_of(self.resolve_alias(id)))
+            }
         };
         Ok(out)
     }
@@ -298,6 +320,7 @@ fn emit_preamble(out: &mut impl Sink) {
         ("read_f32", "f32"),
         ("read_f64", "f64"),
     ] {
+        out.wln("#[inline]");
         out.wln(&format!(
             "fn {fname}<R: Read>(reader: &mut R) -> io::Result<{ty}>"
         ));
@@ -324,6 +347,7 @@ fn emit_preamble(out: &mut impl Sink) {
         ("write_f32", "f32"),
         ("write_f64", "f64"),
     ] {
+        out.wln("#[inline]");
         out.wln(&format!(
             "fn {fname}<W: Write>(writer: &mut W, value: {ty}) -> io::Result<()>"
         ));
@@ -370,8 +394,9 @@ fn emit_read_type_definition(
     let name = ctx.name_of(id);
     match &ty.kind {
         TypeKind::Alias(alias) => {
-            let target_ty = ctx.rust_type(alias.other)?;
-            out.wln(&format!("pub type {name} = {target_ty};"));
+            let target_ty = ctx.rust_read_decl_type(alias.other)?;
+            out.wln("#[derive(Debug, Clone, PartialEq)]");
+            out.wln(&format!("pub struct {name}(pub {target_ty});"));
             out.newline();
         }
         TypeKind::Enum(enm) => {
@@ -490,7 +515,7 @@ fn emit_read_type_definition(
             {
                 let mut idt = out.indent();
                 for m in &seq.members {
-                    let field_ty = ctx.rust_type(m.ty)?;
+                    let field_ty = ctx.rust_read_decl_type(m.ty)?;
                     idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
                 }
             }
@@ -509,7 +534,7 @@ fn emit_read_type_definition(
                     ) {
                         None
                     } else {
-                        Some(ctx.rust_type(m.ty)?)
+                        Some(ctx.rust_read_decl_type(m.ty)?)
                     };
 
                     if let Some(mty) = payload {
@@ -522,12 +547,12 @@ fn emit_read_type_definition(
             out.newline();
         }
         TypeKind::DynamicArray(arr) => {
-            let elem = ctx.rust_type(arr.value_type)?;
+            let elem = ctx.rust_read_decl_type(arr.value_type)?;
             out.wln(&format!("pub type {name} = Vec<{elem}>;"));
             out.newline();
         }
         TypeKind::FixedArray(arr) => {
-            let elem = ctx.rust_type(arr.value_type)?;
+            let elem = ctx.rust_read_decl_type(arr.value_type)?;
             out.wln(&format!("pub type {name} = [{elem}; {}];", arr.count));
             out.newline();
         }
@@ -547,13 +572,14 @@ fn emit_write_type_definition(
     let name = ctx.name_of(id);
     match &ty.kind {
         TypeKind::Alias(alias) => {
-            let target_ty = ctx.rust_view_underlying(alias.other, "'a")?;
+            let target_ty = ctx.rust_write_decl_type(alias.other, "'a")?;
             let needs_lt = ctx.view_needs_lifetime(alias.other);
+            out.wln("#[derive(Debug, Clone, Copy, PartialEq)]");
             if needs_lt {
                 out.wln("#[allow(unused_lifetimes)]");
-                out.wln(&format!("pub type {name}<'a> = {target_ty};"));
+                out.wln(&format!("pub struct {name}<'a>(pub {target_ty});"));
             } else {
-                out.wln(&format!("pub type {name} = {target_ty};"));
+                out.wln(&format!("pub struct {name}(pub {target_ty});"));
             }
             out.newline();
         }
@@ -608,7 +634,7 @@ fn emit_write_type_definition(
             {
                 let mut idt = out.indent();
                 for m in &seq.members {
-                    let field_ty = ctx.rust_view_type(m.ty, "'a")?;
+                    let field_ty = ctx.rust_write_decl_type(m.ty, "'a")?;
                     idt.wln(&format!("pub {}: {},", sanitize(&m.name), field_ty));
                 }
             }
@@ -616,7 +642,10 @@ fn emit_write_type_definition(
         }
         TypeKind::Variant(variant) => {
             let has_ref_payload = variant.members.iter().any(|m| {
-                !matches!(ctx.world.lookup(ctx.resolve_alias(m.ty)).kind, TypeKind::Void)
+                !matches!(
+                    ctx.world.lookup(ctx.resolve_alias(m.ty)).kind,
+                    TypeKind::Void
+                )
             });
             let needs_lt = has_ref_payload || ctx.view_needs_lifetime(id);
             let lt = if needs_lt { "<'a>" } else { "" };
@@ -632,7 +661,7 @@ fn emit_write_type_definition(
                     ) {
                         None
                     } else {
-                        Some(ctx.rust_view_type(m.ty, "'a")?)
+                        Some(ctx.rust_write_decl_type(m.ty, "'a")?)
                     };
 
                     if let Some(mty) = payload {
@@ -645,14 +674,14 @@ fn emit_write_type_definition(
             out.newline();
         }
         TypeKind::DynamicArray(arr) => {
-            let elem_view = ctx.rust_view_type(arr.value_type, "'a")?;
+            let elem_view = ctx.rust_write_decl_type(arr.value_type, "'a")?;
             out.wln(&format!("pub type {name}View<'a> = &'a [{elem_view}];"));
             out.newline();
         }
         TypeKind::FixedArray(arr) => {
-            let elem_view = ctx.rust_type(arr.value_type)?;
+            let elem_view = ctx.rust_read_decl_type(arr.value_type)?;
             out.wln(&format!("pub type {name} = [{elem_view}; {}];", arr.count));
-            let elem_view = ctx.rust_view_type(arr.value_type, "'a")?;
+            let elem_view = ctx.rust_write_decl_type(arr.value_type, "'a")?;
             out.wln(&format!("pub type {name}View<'a> = &'a [{elem_view}];"));
             out.newline();
         }
@@ -669,17 +698,15 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
         TypeKind::Primitive(_) => {}
         TypeKind::Void => {}
         TypeKind::Alias(alias) => {
-            let target_ty = ctx.rust_type(alias.other)?;
+            let target_ty = ctx.rust_read_decl_type(id)?;
             out.wln("#[allow(non_snake_case)]");
             out.wln(&format!(
                 "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<{target_ty}>"
             ));
             {
                 let mut idt = out.indent();
-                idt.wln(&format!(
-                    "read_{}(reader)",
-                    ctx.name_of(ctx.resolve_alias(alias.other))
-                ));
+                idt.wln(&format!("let inner = {}?;", read_expr(ctx, alias.other, "reader")?));
+                idt.wln(&format!("Ok({name}(inner))"));
             }
             out.newline();
         }
@@ -874,7 +901,7 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
             out.newline();
         }
         TypeKind::DynamicArray(arr) => {
-            let elem_name = ctx.rust_type(arr.value_type)?;
+            let elem_name = ctx.rust_read_decl_type(arr.value_type)?;
             let size_read = read_primitive_method(ctx, arr.size_type)?;
             out.wln("#[allow(non_snake_case)]");
             out.wln(&format!(
@@ -911,7 +938,7 @@ fn emit_read_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type)
             out.newline();
         }
         TypeKind::FixedArray(arr) => {
-            let elem_name = ctx.rust_type(arr.value_type)?;
+            let elem_name = ctx.rust_read_decl_type(arr.value_type)?;
             out.wln("#[allow(non_snake_case)]");
             out.wln(&format!(
                 "pub fn read_{name}<R: Read>(reader: &mut R) -> io::Result<[{}; {}]>",
@@ -960,15 +987,24 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
         TypeKind::Primitive(_) => {}
         TypeKind::Void => {}
         TypeKind::Alias(alias) => {
-            let target_view = ctx.rust_view_type(alias.other, "'_")?;
+            let target_view = if ctx.view_needs_lifetime(id) {
+                format!("{name}<'_>")
+            } else {
+                name.clone()
+            };
             out.wln("#[allow(non_snake_case)]");
             out.wln(&format!(
                 "pub fn write_{name}<W: Write>(writer: &mut W, value: &{target_view}) -> io::Result<()>"
             ));
             {
                 let mut idt = out.indent();
-                let target_name = ctx.name_of(ctx.resolve_alias(alias.other));
-                idt.wln(&format!("write_{target_name}(writer, value)"));
+                let expr = if ctx.direct_primitive(alias.other).is_some() {
+                    "value.0"
+                } else {
+                    "&value.0"
+                };
+                write_value(ctx, &mut idt, alias.other, expr)?;
+                idt.wln("Ok(())");
             }
             out.newline();
         }
@@ -1152,29 +1188,34 @@ fn emit_write_impl(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type
 
 /// Builds a Rust expression string to read a value of `id` from `reader_ident`.
 fn read_expr(ctx: &RustContext, id: TypeID, reader_ident: &str) -> Result<String> {
-    let ty = ctx.world.lookup(ctx.resolve_alias(id));
+    let ty = ctx.world.lookup(id);
     let expr = match &ty.kind {
         TypeKind::Primitive(p) => {
             let method = read_primitive_method_direct(*p)?;
             format!("{method}({reader_ident})")
         }
         TypeKind::Void => "Ok(())".into(),
-        TypeKind::Alias(alias) => return read_expr(ctx, alias.other, reader_ident),
-        _ => format!("read_{}({reader_ident})", ctx.name_of(id)),
+        TypeKind::Alias(_) => format!("read_{}({reader_ident})", ctx.name_of(id)),
+        _ => format!(
+            "read_{}({reader_ident})",
+            ctx.name_of(ctx.resolve_alias(id))
+        ),
     };
     Ok(expr)
 }
 
 /// Emits Rust statements that write `value_expr` of type `id` into `writer`.
 fn write_value(ctx: &RustContext, out: &mut impl Sink, id: TypeID, value_expr: &str) -> Result<()> {
-    let ty = ctx.world.lookup(ctx.resolve_alias(id));
+    let ty = ctx.world.lookup(id);
     match &ty.kind {
         TypeKind::Primitive(p) => {
             let method = write_primitive_method_direct(*p)?;
             out.wln(&format!("{method}(writer, {value_expr})?;"));
         }
         TypeKind::Void => {}
-        TypeKind::Alias(alias) => write_value(ctx, out, alias.other, value_expr)?,
+        TypeKind::Alias(_) => {
+            out.wln(&format!("write_{}(writer, {value_expr})?;", ctx.name_of(id)));
+        }
         TypeKind::Enum(enm) => {
             let method = write_primitive_method(ctx, enm.underlying)?;
             out.wln(&format!("{method}(writer, {value_expr} as _)?;"));

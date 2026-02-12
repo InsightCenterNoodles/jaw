@@ -433,21 +433,21 @@ fn main() -> io::Result<()> {
     {
         use example::read as rmod;
         use example::write as wmod;
-        let alpha = wmod::MyOtherPOD {
+        let alpha = wmod::Alpha(wmod::MyOtherPOD {
             first: wmod::MyPOD {
                 a_thing: 1,
                 b_thing: 2,
             },
             second: [1u8, 2u8, 3u8, 4u8],
-        };
+        });
         let mut buf = Vec::new();
         wmod::write_Alpha(&mut buf, &alpha)?;
         let mut cur = Cursor::new(buf);
         let got = rmod::read_Alpha(&mut cur)?;
-        demand(got.first.a_thing == 1, "Alpha.first.a_thing");
-        demand(got.first.b_thing == 2, "Alpha.first.b_thing");
+        demand(got.0.first.a_thing == 1, "Alpha.first.a_thing");
+        demand(got.0.first.b_thing == 2, "Alpha.first.b_thing");
         for j in 0..4 {
-            demand(got.second[j] == alpha.second[j], "Alpha.second");
+            demand(got.0.second[j] == alpha.0.second[j], "Alpha.second");
         }
     }
 

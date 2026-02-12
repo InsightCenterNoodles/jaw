@@ -7,60 +7,70 @@ fn invalid_data(msg: impl Into<String>) -> io::Error
     io::Error::new(io::ErrorKind::InvalidData, msg.into())
 }
 
+#[inline]
 fn read_u8<R: Read>(reader: &mut R) -> io::Result<u8>
 {
     let mut buf = [0u8; std::mem::size_of::<u8>()];
     reader.read_exact(&mut buf)?;
     Ok(u8::from_le_bytes(buf))
 }
+#[inline]
 fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8>
 {
     let mut buf = [0u8; std::mem::size_of::<i8>()];
     reader.read_exact(&mut buf)?;
     Ok(i8::from_le_bytes(buf))
 }
+#[inline]
 fn read_u16<R: Read>(reader: &mut R) -> io::Result<u16>
 {
     let mut buf = [0u8; std::mem::size_of::<u16>()];
     reader.read_exact(&mut buf)?;
     Ok(u16::from_le_bytes(buf))
 }
+#[inline]
 fn read_i16<R: Read>(reader: &mut R) -> io::Result<i16>
 {
     let mut buf = [0u8; std::mem::size_of::<i16>()];
     reader.read_exact(&mut buf)?;
     Ok(i16::from_le_bytes(buf))
 }
+#[inline]
 fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32>
 {
     let mut buf = [0u8; std::mem::size_of::<u32>()];
     reader.read_exact(&mut buf)?;
     Ok(u32::from_le_bytes(buf))
 }
+#[inline]
 fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32>
 {
     let mut buf = [0u8; std::mem::size_of::<i32>()];
     reader.read_exact(&mut buf)?;
     Ok(i32::from_le_bytes(buf))
 }
+#[inline]
 fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64>
 {
     let mut buf = [0u8; std::mem::size_of::<u64>()];
     reader.read_exact(&mut buf)?;
     Ok(u64::from_le_bytes(buf))
 }
+#[inline]
 fn read_i64<R: Read>(reader: &mut R) -> io::Result<i64>
 {
     let mut buf = [0u8; std::mem::size_of::<i64>()];
     reader.read_exact(&mut buf)?;
     Ok(i64::from_le_bytes(buf))
 }
+#[inline]
 fn read_f32<R: Read>(reader: &mut R) -> io::Result<f32>
 {
     let mut buf = [0u8; std::mem::size_of::<f32>()];
     reader.read_exact(&mut buf)?;
     Ok(f32::from_le_bytes(buf))
 }
+#[inline]
 fn read_f64<R: Read>(reader: &mut R) -> io::Result<f64>
 {
     let mut buf = [0u8; std::mem::size_of::<f64>()];
@@ -68,42 +78,52 @@ fn read_f64<R: Read>(reader: &mut R) -> io::Result<f64>
     Ok(f64::from_le_bytes(buf))
 }
 
+#[inline]
 fn write_u8<W: Write>(writer: &mut W, value: u8) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_i8<W: Write>(writer: &mut W, value: i8) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_u16<W: Write>(writer: &mut W, value: u16) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_i16<W: Write>(writer: &mut W, value: i16) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_u32<W: Write>(writer: &mut W, value: u32) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_i32<W: Write>(writer: &mut W, value: i32) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_u64<W: Write>(writer: &mut W, value: u64) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_i64<W: Write>(writer: &mut W, value: i64) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_f32<W: Write>(writer: &mut W, value: f32) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
 }
+#[inline]
 fn write_f64<W: Write>(writer: &mut W, value: f64) -> io::Result<()>
 {
     writer.write_all(&value.to_le_bytes())
@@ -153,6 +173,13 @@ pub mod read
     impl Copy for MyPOD { }
     unsafe impl bytemuck::Zeroable for MyPOD { }
     unsafe impl bytemuck::Pod for MyPOD { }
+    impl Default for MyPOD
+    {
+        fn default() -> Self
+        {
+            <MyPOD as bytemuck::Zeroable>::zeroed()
+        }
+    }
     
     pub type FixedString = [u8; 4];
     
@@ -199,8 +226,16 @@ pub mod read
     impl Copy for MyOtherPOD { }
     unsafe impl bytemuck::Zeroable for MyOtherPOD { }
     unsafe impl bytemuck::Pod for MyOtherPOD { }
+    impl Default for MyOtherPOD
+    {
+        fn default() -> Self
+        {
+            <MyOtherPOD as bytemuck::Zeroable>::zeroed()
+        }
+    }
     
-    pub type Alpha = MyOtherPOD;
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Alpha(pub MyOtherPOD);
     
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +268,18 @@ pub mod read
         pub list: Data,
     }
     
+    pub type MyPODFixedList = [MyPOD; 8];
+    
+    pub type MyOtherPODDynList = Vec<MyOtherPOD>;
+    
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ComplexSeq
+    {
+        pub flags: MyFlags,
+        pub list: MyPODFixedList,
+        pub other_list: MyOtherPODDynList,
+    }
+    
     #[derive(Debug, Clone, PartialEq)]
     pub enum MyVariant
     {
@@ -240,6 +287,7 @@ pub mod read
         MyOtherPOD_2(MyOtherPOD),
         void_3,
         SmallSeq_4(SmallSeq),
+        ComplexSeq_5(ComplexSeq),
     }
     
     #[derive(Debug, Clone, PartialEq)]
@@ -298,9 +346,10 @@ pub mod read
     }
     
     #[allow(non_snake_case)]
-    pub fn read_Alpha<R: Read>(reader: &mut R) -> io::Result<MyOtherPOD>
+    pub fn read_Alpha<R: Read>(reader: &mut R) -> io::Result<Alpha>
     {
-        read_MyOtherPOD(reader)
+        let inner = read_MyOtherPOD(reader)?;
+        Ok(Alpha(inner))
     }
     
     #[allow(non_snake_case)]
@@ -360,6 +409,39 @@ pub mod read
     }
     
     #[allow(non_snake_case)]
+    pub fn read_MyPODFixedList<R: Read>(reader: &mut R) -> io::Result<[MyPOD; 8]>
+    {
+        let mut out : [MyPOD; 8] = Default::default();
+        reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;
+        Ok(out)
+    }
+    
+    #[allow(non_snake_case)]
+    pub fn read_MyOtherPODDynList<R: Read>(reader: &mut R) -> io::Result<Vec<MyOtherPOD>>
+    {
+        let count_raw = read_u16(reader)?;
+        let count: usize = count_raw.try_into().map_err(|_| invalid_data("array length too large"))?;
+        let mut out = vec![Default::default(); count];
+        reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;
+        Ok(out)
+    }
+    
+    #[allow(non_snake_case)]
+    pub fn read_ComplexSeq<R: Read>(reader: &mut R) -> io::Result<ComplexSeq>
+    {
+        let flags = read_MyFlags(reader)?;
+        let list = read_MyPODFixedList(reader)?;
+        let other_list = read_MyOtherPODDynList(reader)?;
+        Ok(ComplexSeq
+        {
+            flags,
+            list,
+            other_list,
+        }
+        )
+    }
+    
+    #[allow(non_snake_case)]
     pub fn read_MyVariant<R: Read>(reader: &mut R) -> io::Result<MyVariant>
     {
         let tag = read_u8(reader)?;
@@ -388,6 +470,12 @@ pub mod read
                 Ok(MyVariant::SmallSeq_4(payload))
             }
             ,
+            5 => 
+            {
+                let payload = read_ComplexSeq(reader)?;
+                Ok(MyVariant::ComplexSeq_5(payload))
+            }
+            ,
             _ => Err(invalid_data(format!("unknown tag for MyVariant: {tag}"))),
         }
     }
@@ -411,7 +499,7 @@ pub mod write
 {
     use super::*;
     
-    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq)]
     #[repr(C, packed(1))]
     pub struct MyPOD
     {
@@ -428,7 +516,7 @@ pub mod write
     
     pub type DataView<'a> = &'a [f32];
     
-    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq)]
     #[repr(C, packed(1))]
     pub struct MyOtherPOD
     {
@@ -438,7 +526,8 @@ pub mod write
     unsafe impl bytemuck::Zeroable for MyOtherPOD { }
     unsafe impl bytemuck::Pod for MyOtherPOD { }
     
-    pub type Alpha = MyOtherPOD;
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Alpha(pub MyOtherPOD);
     
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,6 +560,19 @@ pub mod write
         pub list: DataView<'a>,
     }
     
+    pub type MyPODFixedList = [MyPOD; 8];
+    pub type MyPODFixedListView<'a> = &'a [MyPOD];
+    
+    pub type MyOtherPODDynListView<'a> = &'a [MyOtherPOD];
+    
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct ComplexSeq<'a>
+    {
+        pub flags: MyFlags,
+        pub list: MyPODFixedListView<'a>,
+        pub other_list: MyOtherPODDynListView<'a>,
+    }
+    
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub enum MyVariant<'a>
     {
@@ -478,6 +580,7 @@ pub mod write
         MyOtherPOD_2(&'a MyOtherPOD),
         void_3,
         SmallSeq_4(&'a SmallSeq<'a>),
+        ComplexSeq_5(&'a ComplexSeq<'a>),
     }
     
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -506,6 +609,7 @@ pub mod write
     {
         let len = values.len();
         let max_len: usize = 255usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
         if len > max_len { return Err(invalid_data("array length too large to encode")); }
         let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
         write_u8(writer, count as _)?;
@@ -518,6 +622,7 @@ pub mod write
     {
         let len = values.len();
         let max_len: usize = 255usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
         if len > max_len { return Err(invalid_data("array length too large to encode")); }
         let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
         write_u8(writer, count as _)?;
@@ -532,9 +637,10 @@ pub mod write
     }
     
     #[allow(non_snake_case)]
-    pub fn write_Alpha<W: Write>(writer: &mut W, value: &MyOtherPOD) -> io::Result<()>
+    pub fn write_Alpha<W: Write>(writer: &mut W, value: &Alpha) -> io::Result<()>
     {
-        write_MyOtherPOD(writer, value)
+        write_MyOtherPOD(writer, &value.0)?;
+        Ok(())
     }
     
     #[allow(non_snake_case)]
@@ -567,6 +673,42 @@ pub mod write
     }
     
     #[allow(non_snake_case)]
+    pub fn write_MyPODFixedList<W: Write>(writer: &mut W, values: &MyPODFixedListView<'_>) -> io::Result<()>
+    {
+        if values.len() != 8 { return Err(invalid_data("unexpected fixed array length")); }
+        for v in *values
+        {
+            write_MyPOD(writer, v)?;
+        }
+        Ok(())
+    }
+    
+    #[allow(non_snake_case)]
+    pub fn write_MyOtherPODDynList<W: Write>(writer: &mut W, values: &MyOtherPODDynListView<'_>) -> io::Result<()>
+    {
+        let len = values.len();
+        let max_len: usize = 65535usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
+        if len > max_len { return Err(invalid_data("array length too large to encode")); }
+        let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
+        write_u16(writer, count as _)?;
+        for v in *values
+        {
+            write_MyOtherPOD(writer, v)?;
+        }
+        Ok(())
+    }
+    
+    #[allow(non_snake_case)]
+    pub fn write_ComplexSeq<W: Write>(writer: &mut W, value: &ComplexSeq<'_>) -> io::Result<()>
+    {
+        write_MyFlags(writer, &value.flags)?;
+        write_MyPODFixedList(writer, &value.list)?;
+        write_MyOtherPODDynList(writer, &value.other_list)?;
+        Ok(())
+    }
+    
+    #[allow(non_snake_case)]
     pub fn write_MyVariant<W: Write>(writer: &mut W, value: &MyVariant<'_>) -> io::Result<()>
     {
         match value
@@ -595,6 +737,13 @@ pub mod write
             {
                 write_u8(writer, 4)?;
                 write_SmallSeq(writer, inner)?;
+                Ok(())
+            }
+            ,
+            MyVariant::ComplexSeq_5(inner) =>
+            {
+                write_u8(writer, 5)?;
+                write_ComplexSeq(writer, inner)?;
                 Ok(())
             }
             ,
