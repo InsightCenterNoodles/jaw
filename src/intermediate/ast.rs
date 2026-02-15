@@ -99,11 +99,6 @@ pub struct Sequence {
     pub members: Vec<StructMember>,
 }
 
-#[derive(Debug)]
-pub struct Alias {
-    pub other: TypeName,
-}
-
 /// Array kinds
 #[derive(Debug)]
 pub struct DynamicArray {
@@ -119,7 +114,6 @@ pub struct FixedArray {
 
 #[derive(Debug)]
 pub enum TypeKind {
-    Alias(Alias),
     Pack(Pack),
     Enum(Enum),
     Bitfld(Bitfld),

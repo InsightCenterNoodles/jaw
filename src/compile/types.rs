@@ -61,11 +61,6 @@ pub struct Sequence {
     pub members: Vec<StructMember>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Alias {
-    pub other: TypeID,
-}
-
 /// Array kinds
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynamicArray {
@@ -185,7 +180,6 @@ impl Display for Primitive {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
-    Alias(Alias),
     Pack(Pack),
     Enum(Enum),
     Bitfld(Bitfld),
@@ -208,7 +202,6 @@ impl Type {
     /// Returns whether this type is POD (plain-old-data) under the DSL rules.
     fn is_pod(&self, world: &World) -> bool {
         match &self.kind {
-            TypeKind::Alias(alias) => world.lookup(alias.other).is_pod(world),
             TypeKind::Pack(_) => true,
             TypeKind::Enum(_) => true,
             TypeKind::Bitfld(_) => true,
@@ -302,7 +295,6 @@ impl World {
             .into_iter()
             .map(|(mut k, mut v)| {
                 match &mut v.kind {
-                    TypeKind::Alias(alias) => remap(&mut alias.other),
                     TypeKind::Pack(pack) => {
                         for m in &mut pack.members {
                             remap(&mut m.ty);

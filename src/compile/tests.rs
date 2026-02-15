@@ -36,28 +36,14 @@ dyn_array Bad : u8 * void
 #[test]
 fn cycles_are_rejected() {
     let src = r#"
-alias A : B
-alias B : A
+pack A
+- thing : B
+pack B
+- other_thing : A
 "#;
 
     let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
     let err = compile(module).expect_err("compile should reject cycles");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.to_lowercase().contains("cyclic"),
-        "unexpected error message: {msg}"
-    );
-}
-
-/// Test: direct self-references are rejected.
-#[test]
-fn self_references_are_rejected() {
-    let src = r#"
-alias A : A
-"#;
-
-    let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
-    let err = compile(module).expect_err("compile should reject self reference");
     let msg = format!("{err:#}");
     assert!(
         msg.to_lowercase().contains("cyclic"),
@@ -131,22 +117,6 @@ pack C
             "toposort should be deterministic across invocations"
         );
     }
-}
-
-/// Test: unknown type references are rejected.
-#[test]
-fn unknown_types_are_rejected() {
-    let src = r#"
-alias A : Missing
-"#;
-
-    let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
-    let err = compile(module).expect_err("compile should reject unknown type names");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("Missing"),
-        "unexpected error message, wanted type name: {msg}"
-    );
 }
 
 /// Test: merge worlds

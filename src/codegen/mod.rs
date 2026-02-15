@@ -140,18 +140,6 @@ impl<'a> Indenter<'a> {
     }
 }
 
-impl<'a> Write for Indenter<'a> {
-    /// Writes raw bytes to the underlying buffered output.
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    /// Flushes the underlying buffered output.
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
-}
-
 // MARK: Utils
 
 /// Opens an output file and configures indentation tokens for the generator.

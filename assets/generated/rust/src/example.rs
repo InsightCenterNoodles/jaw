@@ -2,303 +2,252 @@
 use std::io::{self, Read, Write};
 use std::convert::TryInto;
 
+
+
+pub trait JawRead : Sized {
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>;
+}
+
+pub trait JawWrite {
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>;
+}
+
+
 fn invalid_data(msg: impl Into<String>) -> io::Error
 {
     io::Error::new(io::ErrorKind::InvalidData, msg.into())
 }
 
-#[inline]
-fn read_u8<R: Read>(reader: &mut R) -> io::Result<u8>
+impl JawRead for u8
 {
-    let mut buf = [0u8; std::mem::size_of::<u8>()];
-    reader.read_exact(&mut buf)?;
-    Ok(u8::from_le_bytes(buf))
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<u8>()];
+        reader.read_exact(&mut buf)?;
+        Ok(u8::from_le_bytes(buf))
+    }
 }
-#[inline]
-fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8>
+impl JawWrite for u8
 {
-    let mut buf = [0u8; std::mem::size_of::<i8>()];
-    reader.read_exact(&mut buf)?;
-    Ok(i8::from_le_bytes(buf))
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
-#[inline]
-fn read_u16<R: Read>(reader: &mut R) -> io::Result<u16>
+impl JawRead for i8
 {
-    let mut buf = [0u8; std::mem::size_of::<u16>()];
-    reader.read_exact(&mut buf)?;
-    Ok(u16::from_le_bytes(buf))
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<i8>()];
+        reader.read_exact(&mut buf)?;
+        Ok(i8::from_le_bytes(buf))
+    }
 }
-#[inline]
-fn read_i16<R: Read>(reader: &mut R) -> io::Result<i16>
+impl JawWrite for i8
 {
-    let mut buf = [0u8; std::mem::size_of::<i16>()];
-    reader.read_exact(&mut buf)?;
-    Ok(i16::from_le_bytes(buf))
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
-#[inline]
-fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32>
+impl JawRead for u16
 {
-    let mut buf = [0u8; std::mem::size_of::<u32>()];
-    reader.read_exact(&mut buf)?;
-    Ok(u32::from_le_bytes(buf))
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<u16>()];
+        reader.read_exact(&mut buf)?;
+        Ok(u16::from_le_bytes(buf))
+    }
 }
-#[inline]
-fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32>
+impl JawWrite for u16
 {
-    let mut buf = [0u8; std::mem::size_of::<i32>()];
-    reader.read_exact(&mut buf)?;
-    Ok(i32::from_le_bytes(buf))
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
-#[inline]
-fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64>
+impl JawRead for i16
 {
-    let mut buf = [0u8; std::mem::size_of::<u64>()];
-    reader.read_exact(&mut buf)?;
-    Ok(u64::from_le_bytes(buf))
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<i16>()];
+        reader.read_exact(&mut buf)?;
+        Ok(i16::from_le_bytes(buf))
+    }
 }
-#[inline]
-fn read_i64<R: Read>(reader: &mut R) -> io::Result<i64>
+impl JawWrite for i16
 {
-    let mut buf = [0u8; std::mem::size_of::<i64>()];
-    reader.read_exact(&mut buf)?;
-    Ok(i64::from_le_bytes(buf))
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
-#[inline]
-fn read_f32<R: Read>(reader: &mut R) -> io::Result<f32>
+impl JawRead for u32
 {
-    let mut buf = [0u8; std::mem::size_of::<f32>()];
-    reader.read_exact(&mut buf)?;
-    Ok(f32::from_le_bytes(buf))
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<u32>()];
+        reader.read_exact(&mut buf)?;
+        Ok(u32::from_le_bytes(buf))
+    }
 }
-#[inline]
-fn read_f64<R: Read>(reader: &mut R) -> io::Result<f64>
+impl JawWrite for u32
 {
-    let mut buf = [0u8; std::mem::size_of::<f64>()];
-    reader.read_exact(&mut buf)?;
-    Ok(f64::from_le_bytes(buf))
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
+}
+impl JawRead for i32
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<i32>()];
+        reader.read_exact(&mut buf)?;
+        Ok(i32::from_le_bytes(buf))
+    }
+}
+impl JawWrite for i32
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
+}
+impl JawRead for u64
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<u64>()];
+        reader.read_exact(&mut buf)?;
+        Ok(u64::from_le_bytes(buf))
+    }
+}
+impl JawWrite for u64
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
+}
+impl JawRead for i64
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<i64>()];
+        reader.read_exact(&mut buf)?;
+        Ok(i64::from_le_bytes(buf))
+    }
+}
+impl JawWrite for i64
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
+}
+impl JawRead for f32
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<f32>()];
+        reader.read_exact(&mut buf)?;
+        Ok(f32::from_le_bytes(buf))
+    }
+}
+impl JawWrite for f32
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
+}
+impl JawRead for f64
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let mut buf = [0u8; std::mem::size_of::<f64>()];
+        reader.read_exact(&mut buf)?;
+        Ok(f64::from_le_bytes(buf))
+    }
+}
+impl JawWrite for f64
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(&self.to_le_bytes())
+    }
 }
 
-#[inline]
-fn write_u8<W: Write>(writer: &mut W, value: u8) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_i8<W: Write>(writer: &mut W, value: i8) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_u16<W: Write>(writer: &mut W, value: u16) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_i16<W: Write>(writer: &mut W, value: i16) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_u32<W: Write>(writer: &mut W, value: u32) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_i32<W: Write>(writer: &mut W, value: i32) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_u64<W: Write>(writer: &mut W, value: u64) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_i64<W: Write>(writer: &mut W, value: i64) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_f32<W: Write>(writer: &mut W, value: f32) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
-#[inline]
-fn write_f64<W: Write>(writer: &mut W, value: f64) -> io::Result<()>
-{
-    writer.write_all(&value.to_le_bytes())
-}
 
 
-pub mod read
+#[repr(C, packed(1))]
+pub struct MyPOD
 {
-    use super::*;
-    
-    #[repr(C, packed(1))]
-    pub struct MyPOD
+    pub a_thing: u8,
+    pub b_thing: u64,
+}
+impl std::fmt::Debug for MyPOD
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
     {
-        pub a_thing: u8,
-        pub b_thing: u64,
+        let a_thing = unsafe {  (&raw const self.a_thing).read_unaligned() };
+        let b_thing = unsafe {  (&raw const self.b_thing).read_unaligned() };
+        f.debug_struct("MyPOD")
+        .field("a_thing", &a_thing)
+        .field("b_thing", &b_thing)
+        .finish()
     }
-    impl std::fmt::Debug for MyPOD
+}
+impl Clone for MyPOD
+{
+    fn clone(&self) -> Self
     {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-        {
-            let a_thing = self.a_thing;
-            let b_thing = self.b_thing;
-            f.debug_struct("MyPOD")
-            .field("a_thing", &a_thing)
-            .field("b_thing", &b_thing)
-            .finish()
-        }
+        *bytemuck::from_bytes(bytemuck::bytes_of(self))
     }
-    impl Clone for MyPOD
+}
+impl PartialEq for MyPOD
+{
+    fn eq(&self, other: &Self) -> bool
     {
-        fn clone(&self) -> Self
-        {
-            Self
-            {
-                a_thing: self.a_thing,
-                b_thing: self.b_thing,
-            }
-        }
+        return self.a_thing == other.a_thing&&self.b_thing == other.b_thing
     }
-    impl PartialEq for MyPOD
+}
+impl Copy for MyPOD { }
+unsafe impl bytemuck::Zeroable for MyPOD { }
+unsafe impl bytemuck::Pod for MyPOD { }
+impl Default for MyPOD
+{
+    fn default() -> Self
     {
-        fn eq(&self, other: &Self) -> bool
-        {
-            return self.a_thing == other.a_thing&&self.b_thing == other.b_thing
-        }
+        <MyPOD as bytemuck::Zeroable>::zeroed()
     }
-    impl Copy for MyPOD { }
-    unsafe impl bytemuck::Zeroable for MyPOD { }
-    unsafe impl bytemuck::Pod for MyPOD { }
-    impl Default for MyPOD
-    {
-        fn default() -> Self
-        {
-            <MyPOD as bytemuck::Zeroable>::zeroed()
-        }
-    }
-    
-    pub type FixedString = [u8; 4];
-    
-    pub type ShortString = Vec<u8>;
-    
-    pub type Data = Vec<f32>;
-    
-    #[repr(C, packed(1))]
-    pub struct MyOtherPOD
-    {
-        pub first: MyPOD,
-        pub second: FixedString,
-    }
-    impl std::fmt::Debug for MyOtherPOD
-    {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-        {
-            let first = self.first;
-            let second = self.second;
-            f.debug_struct("MyOtherPOD")
-            .field("first", &first)
-            .field("second", &second)
-            .finish()
-        }
-    }
-    impl Clone for MyOtherPOD
-    {
-        fn clone(&self) -> Self
-        {
-            Self
-            {
-                first: self.first,
-                second: self.second,
-            }
-        }
-    }
-    impl PartialEq for MyOtherPOD
-    {
-        fn eq(&self, other: &Self) -> bool
-        {
-            return self.first == other.first&&self.second == other.second
-        }
-    }
-    impl Copy for MyOtherPOD { }
-    unsafe impl bytemuck::Zeroable for MyOtherPOD { }
-    unsafe impl bytemuck::Pod for MyOtherPOD { }
-    impl Default for MyOtherPOD
-    {
-        fn default() -> Self
-        {
-            <MyOtherPOD as bytemuck::Zeroable>::zeroed()
-        }
-    }
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct Alpha(pub MyOtherPOD);
-    
-    #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum PlainEnum
-    {
-        F1 = 0,
-        F2 = 1,
-    }
-    
-    #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum BetterEnum
-    {
-        A = 0,
-        B = 1,
-        DEFAULT = 255,
-    }
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct MyFlags
-    {
-        pub is_thing: u8,
-        pub another_thing: u8,
-        pub some_stuff: PlainEnum,
-    }
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct SmallSeq
-    {
-        pub list: Data,
-    }
-    
-    pub type MyPODFixedList = [MyPOD; 8];
-    
-    pub type MyOtherPODDynList = Vec<MyOtherPOD>;
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct ComplexSeq
-    {
-        pub flags: MyFlags,
-        pub list: MyPODFixedList,
-        pub other_list: MyOtherPODDynList,
-    }
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub enum MyVariant
-    {
-        MyPOD_1(MyPOD),
-        MyOtherPOD_2(MyOtherPOD),
-        void_3,
-        SmallSeq_4(SmallSeq),
-        ComplexSeq_5(ComplexSeq),
-    }
-    
-    #[derive(Debug, Clone, PartialEq)]
-    pub struct Root
-    {
-        pub name: ShortString,
-        pub var: MyVariant,
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyPOD<R: Read>(reader: &mut R) -> io::Result<MyPOD>
+}
+
+impl JawRead for MyPOD
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
     {
         // Safety: Bytes will be overwritten anyway
         #[allow(invalid_value)]
@@ -306,37 +255,181 @@ pub mod read
         reader.read_exact(bytemuck::bytes_of_mut(&mut tmp))?;
         Ok(tmp)
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_FixedString<R: Read>(reader: &mut R) -> io::Result<[u8; 4]>
+}
+impl JawWrite for MyPOD
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        writer.write_all(bytemuck::bytes_of(self))
+    }
+}
+#[derive(Debug, Clone, Copy,PartialEq)]
+pub struct FixedString(pub [u8; 4]);
+
+#[derive(Debug, PartialEq)]
+pub struct FixedStringView<'a>(pub &'a [u8]);
+
+
+impl JawRead for FixedString
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
     {
         let mut out : [u8; 4] = Default::default();
         reader.read_exact(&mut out)?;
-        Ok(out)
+        Ok(Self(out))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_ShortString<R: Read>(reader: &mut R) -> io::Result<Vec<u8>>
+}
+impl JawWrite for FixedString
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let count_raw = read_u8(reader)?;
+        FixedStringView(&self.0).jaw_write(writer)
+    }
+}
+impl<'a> JawWrite for FixedStringView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        if self.0.len() != 4 { return Err(invalid_data("unexpected fixed array length")); }
+        writer.write_all(bytemuck::cast_slice(self.0))?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShortString(pub Vec<u8>);
+
+#[derive(Debug, PartialEq)]
+pub struct ShortStringView<'a>(pub &'a [u8]);
+
+
+impl JawRead for ShortString
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let count_raw = u8::jaw_read(reader)?;
         let count: usize = count_raw.try_into().map_err(|_| invalid_data("array length too large"))?;
         let mut out = vec![Default::default(); count];
         reader.read_exact(&mut out)?;
-        Ok(out)
+        Ok(Self(out))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_Data<R: Read>(reader: &mut R) -> io::Result<Vec<f32>>
+}
+impl JawWrite for ShortString
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let count_raw = read_u8(reader)?;
+        ShortStringView(&self.0).jaw_write(writer)
+    }
+}
+impl<'a> JawWrite for ShortStringView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        let len = self.0.len();
+        let max_len: usize = 255usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
+        if len > max_len { return Err(invalid_data("array length too large to encode")); }
+        let count: u8 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
+        count.jaw_write(writer)?;
+        writer.write_all(bytemuck::cast_slice(self.0))?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct Data(pub Vec<f32>);
+
+#[derive(Debug, PartialEq)]
+pub struct DataView<'a>(pub &'a [f32]);
+
+
+impl JawRead for Data
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let count_raw = u8::jaw_read(reader)?;
         let count: usize = count_raw.try_into().map_err(|_| invalid_data("array length too large"))?;
         let mut out = vec![Default::default(); count];
         reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;
-        Ok(out)
+        Ok(Self(out))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyOtherPOD<R: Read>(reader: &mut R) -> io::Result<MyOtherPOD>
+}
+impl JawWrite for Data
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        DataView(&self.0).jaw_write(writer)
+    }
+}
+impl<'a> JawWrite for DataView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        let len = self.0.len();
+        let max_len: usize = 255usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
+        if len > max_len { return Err(invalid_data("array length too large to encode")); }
+        let count: u8 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
+        count.jaw_write(writer)?;
+        writer.write_all(bytemuck::cast_slice(self.0))?;
+        Ok(())
+    }
+}
+#[repr(C, packed(1))]
+pub struct MyOtherPOD
+{
+    pub first: MyPOD,
+    pub second: FixedString,
+}
+impl std::fmt::Debug for MyOtherPOD
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+    {
+        let first = unsafe {  (&raw const self.first).read_unaligned() };
+        let second = unsafe {  (&raw const self.second).read_unaligned() };
+        f.debug_struct("MyOtherPOD")
+        .field("first", &first)
+        .field("second", &second)
+        .finish()
+    }
+}
+impl Clone for MyOtherPOD
+{
+    fn clone(&self) -> Self
+    {
+        *bytemuck::from_bytes(bytemuck::bytes_of(self))
+    }
+}
+impl PartialEq for MyOtherPOD
+{
+    fn eq(&self, other: &Self) -> bool
+    {
+        return self.first == other.first&&self.second == other.second
+    }
+}
+impl Copy for MyOtherPOD { }
+unsafe impl bytemuck::Zeroable for MyOtherPOD { }
+unsafe impl bytemuck::Pod for MyOtherPOD { }
+impl Default for MyOtherPOD
+{
+    fn default() -> Self
+    {
+        <MyOtherPOD as bytemuck::Zeroable>::zeroed()
+    }
+}
+
+impl JawRead for MyOtherPOD
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
     {
         // Safety: Bytes will be overwritten anyway
         #[allow(invalid_value)]
@@ -344,18 +437,29 @@ pub mod read
         reader.read_exact(bytemuck::bytes_of_mut(&mut tmp))?;
         Ok(tmp)
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_Alpha<R: Read>(reader: &mut R) -> io::Result<Alpha>
+}
+impl JawWrite for MyOtherPOD
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let inner = read_MyOtherPOD(reader)?;
-        Ok(Alpha(inner))
+        writer.write_all(bytemuck::bytes_of(self))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_PlainEnum<R: Read>(reader: &mut R) -> io::Result<PlainEnum>
+}
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlainEnum
+{
+    F1 = 0,
+    F2 = 1,
+}
+
+impl JawRead for PlainEnum
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
     {
-        let raw = read_u8(reader)?;
+        let raw = u8::jaw_read(reader)?;
         match raw
         {
             0 => Ok(PlainEnum::F1),
@@ -363,11 +467,32 @@ pub mod read
             _ => Err(invalid_data(format!("invalid discriminant for PlainEnum: {raw}"))),
         }
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_BetterEnum<R: Read>(reader: &mut R) -> io::Result<BetterEnum>
+}
+impl JawWrite for PlainEnum
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let raw = read_u8(reader)?;
+        let raw : u8 = *self as _;
+        raw.jaw_write(writer)?;
+        Ok(())
+    }
+}
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BetterEnum
+{
+    A = 0,
+    B = 1,
+    DEFAULT = 255,
+}
+
+impl JawRead for BetterEnum
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let raw = u8::jaw_read(reader)?;
         match raw
         {
             0 => Ok(BetterEnum::A),
@@ -375,11 +500,31 @@ pub mod read
             _ => Ok(BetterEnum::DEFAULT),
         }
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyFlags<R: Read>(reader: &mut R) -> io::Result<MyFlags>
+}
+impl JawWrite for BetterEnum
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let raw = read_u8(reader)? as u128;
+        let raw : u8 = *self as _;
+        raw.jaw_write(writer)?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct MyFlags
+{
+    pub is_thing: u8,
+    pub another_thing: u8,
+    pub some_stuff: PlainEnum,
+}
+
+impl JawRead for MyFlags
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let raw = u8::jaw_read(reader)?;
         let is_thing = (((raw >> 0) & 0x1) as u8) as u8;
         let another_thing = (((raw >> 1) & 0x3) as u8) as u8;
         let some_stuff_raw = ((raw >> 3) & 0x3) as u8;
@@ -396,42 +541,171 @@ pub mod read
         }
         )
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_SmallSeq<R: Read>(reader: &mut R) -> io::Result<SmallSeq>
+}
+impl JawWrite for MyFlags
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let list = read_Data(reader)?;
+        let mut raw: u64 = 0;
+        raw |= ((self.is_thing as u64) & 0x1) << 0;
+        raw |= ((self.another_thing as u64) & 0x3) << 1;
+        raw |= ((self.some_stuff as u64) & 0x3) << 3;
+        let raw = raw as u8;
+        raw.jaw_write(writer)?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmallSeq
+{
+    pub list: Data,
+}
+#[derive(Debug, PartialEq)]
+pub struct SmallSeqView<'a>
+{
+    pub list: DataView<'a>,
+}
+
+
+impl JawRead for SmallSeq
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let list = Data::jaw_read(reader)?;
         Ok(SmallSeq
         {
             list,
         }
         )
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyPODFixedList<R: Read>(reader: &mut R) -> io::Result<[MyPOD; 8]>
+}
+impl JawWrite for SmallSeq
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        self.list.jaw_write(writer)?;
+        Ok(())
+    }
+}
+impl<'a> JawWrite for SmallSeqView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        self.list.jaw_write(writer)?;
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, Copy,PartialEq)]
+pub struct MyPODFixedList(pub [MyPOD; 8]);
+
+#[derive(Debug, PartialEq)]
+pub struct MyPODFixedListView<'a>(pub &'a [MyPOD]);
+
+
+impl JawRead for MyPODFixedList
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
     {
         let mut out : [MyPOD; 8] = Default::default();
         reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;
-        Ok(out)
+        Ok(Self(out))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyOtherPODDynList<R: Read>(reader: &mut R) -> io::Result<Vec<MyOtherPOD>>
+}
+impl JawWrite for MyPODFixedList
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let count_raw = read_u16(reader)?;
+        MyPODFixedListView(&self.0).jaw_write(writer)
+    }
+}
+impl<'a> JawWrite for MyPODFixedListView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        if self.0.len() != 8 { return Err(invalid_data("unexpected fixed array length")); }
+        for v in self.0
+        {
+            v.jaw_write(writer)?;
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct MyOtherPODDynList(pub Vec<MyOtherPOD>);
+
+#[derive(Debug, PartialEq)]
+pub struct MyOtherPODDynListView<'a>(pub &'a [MyOtherPOD]);
+
+
+impl JawRead for MyOtherPODDynList
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let count_raw = u16::jaw_read(reader)?;
         let count: usize = count_raw.try_into().map_err(|_| invalid_data("array length too large"))?;
         let mut out = vec![Default::default(); count];
         reader.read_exact(bytemuck::cast_slice_mut(&mut out))?;
-        Ok(out)
+        Ok(Self(out))
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_ComplexSeq<R: Read>(reader: &mut R) -> io::Result<ComplexSeq>
+}
+impl JawWrite for MyOtherPODDynList
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let flags = read_MyFlags(reader)?;
-        let list = read_MyPODFixedList(reader)?;
-        let other_list = read_MyOtherPODDynList(reader)?;
+        MyOtherPODDynListView(&self.0).jaw_write(writer)
+    }
+}
+impl<'a> JawWrite for MyOtherPODDynListView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        let len = self.0.len();
+        let max_len: usize = 65535usize;
+        // Fail instead of truncating if the vector does not fit in the count type.
+        if len > max_len { return Err(invalid_data("array length too large to encode")); }
+        let count: u16 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
+        count.jaw_write(writer)?;
+        for v in self.0
+        {
+            v.jaw_write(writer)?
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComplexSeq
+{
+    pub flags: MyFlags,
+    pub list: MyPODFixedList,
+    pub other_list: MyOtherPODDynList,
+}
+#[derive(Debug, PartialEq)]
+pub struct ComplexSeqView<'a>
+{
+    pub flags: MyFlags,
+    pub list: MyPODFixedListView<'a>,
+    pub other_list: MyOtherPODDynListView<'a>,
+}
+
+
+impl JawRead for ComplexSeq
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let flags = MyFlags::jaw_read(reader)?;
+        let list = MyPODFixedList::jaw_read(reader)?;
+        let other_list = MyOtherPODDynList::jaw_read(reader)?;
         Ok(ComplexSeq
         {
             flags,
@@ -440,22 +714,69 @@ pub mod read
         }
         )
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_MyVariant<R: Read>(reader: &mut R) -> io::Result<MyVariant>
+}
+impl JawWrite for ComplexSeq
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let tag = read_u8(reader)?;
+        self.flags.jaw_write(writer)?;
+        self.list.jaw_write(writer)?;
+        self.other_list.jaw_write(writer)?;
+        Ok(())
+    }
+}
+impl<'a> JawWrite for ComplexSeqView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        self.flags.jaw_write(writer)?;
+        self.list.jaw_write(writer)?;
+        self.other_list.jaw_write(writer)?;
+        Ok(())
+    }
+}
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum MyVariant
+{
+    MyPOD_1(MyPOD),
+    MyOtherPOD_2(MyOtherPOD),
+    void_3,
+    SmallSeq_4(SmallSeq),
+    ComplexSeq_5(ComplexSeq),
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MyVariantView<'a>
+{
+    MyPOD_1(&'a MyPOD),
+    MyOtherPOD_2(&'a MyOtherPOD),
+    void_3,
+    SmallSeqView_4(&'a SmallSeqView<'a>),
+    ComplexSeqView_5(&'a ComplexSeqView<'a>),
+}
+
+
+impl JawRead for MyVariant
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let tag = u8::jaw_read(reader)?;
         match tag
         {
             1 => 
             {
-                let payload = read_MyPOD(reader)?;
+                let payload = MyPOD::jaw_read(reader)?;
                 Ok(MyVariant::MyPOD_1(payload))
             }
             ,
             2 => 
             {
-                let payload = read_MyOtherPOD(reader)?;
+                let payload = MyOtherPOD::jaw_read(reader)?;
                 Ok(MyVariant::MyOtherPOD_2(payload))
             }
             ,
@@ -466,25 +787,129 @@ pub mod read
             ,
             4 => 
             {
-                let payload = read_SmallSeq(reader)?;
+                let payload = SmallSeq::jaw_read(reader)?;
                 Ok(MyVariant::SmallSeq_4(payload))
             }
             ,
             5 => 
             {
-                let payload = read_ComplexSeq(reader)?;
+                let payload = ComplexSeq::jaw_read(reader)?;
                 Ok(MyVariant::ComplexSeq_5(payload))
             }
             ,
             _ => Err(invalid_data(format!("unknown tag for MyVariant: {tag}"))),
         }
     }
-    
-    #[allow(non_snake_case)]
-    pub fn read_Root<R: Read>(reader: &mut R) -> io::Result<Root>
+}
+impl JawWrite for MyVariant
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let name = read_ShortString(reader)?;
-        let var = read_MyVariant(reader)?;
+        match self
+        {
+            MyVariant::MyPOD_1(inner) =>
+            {
+                (1u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariant::MyOtherPOD_2(inner) =>
+            {
+                (2u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariant::void_3 =>
+            {
+                (3u8).jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariant::SmallSeq_4(inner) =>
+            {
+                (4u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariant::ComplexSeq_5(inner) =>
+            {
+                (5u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+        }
+    }
+}
+impl<'a> JawWrite for MyVariantView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
+    {
+        match self
+        {
+            MyVariantView::MyPOD_1(inner) =>
+            {
+                (1u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariantView::MyOtherPOD_2(inner) =>
+            {
+                (2u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariantView::void_3 =>
+            {
+                (3u8).jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariantView::SmallSeqView_4(inner) =>
+            {
+                (4u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+            MyVariantView::ComplexSeqView_5(inner) =>
+            {
+                (5u8).jaw_write(writer)?;
+                inner.jaw_write(writer)?;
+                Ok(())
+            }
+            ,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct Root
+{
+    pub name: ShortString,
+    pub var: MyVariant,
+}
+#[derive(Debug, PartialEq)]
+pub struct RootView<'a>
+{
+    pub name: ShortStringView<'a>,
+    pub var: MyVariantView<'a>,
+}
+
+
+impl JawRead for Root
+{
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self>
+    {
+        let name = ShortString::jaw_read(reader)?;
+        let var = MyVariant::jaw_read(reader)?;
         Ok(Root
         {
             name,
@@ -492,270 +917,24 @@ pub mod read
         }
         )
     }
-    
 }
-
-pub mod write
+impl JawWrite for Root
 {
-    use super::*;
-    
-    #[derive(Debug, Default, Clone, Copy, PartialEq)]
-    #[repr(C, packed(1))]
-    pub struct MyPOD
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        pub a_thing: u8,
-        pub b_thing: u64,
-    }
-    unsafe impl bytemuck::Zeroable for MyPOD { }
-    unsafe impl bytemuck::Pod for MyPOD { }
-    
-    pub type FixedString = [u8; 4];
-    pub type FixedStringView<'a> = &'a [u8];
-    
-    pub type ShortStringView<'a> = &'a [u8];
-    
-    pub type DataView<'a> = &'a [f32];
-    
-    #[derive(Debug, Default, Clone, Copy, PartialEq)]
-    #[repr(C, packed(1))]
-    pub struct MyOtherPOD
-    {
-        pub first: MyPOD,
-        pub second: FixedString,
-    }
-    unsafe impl bytemuck::Zeroable for MyOtherPOD { }
-    unsafe impl bytemuck::Pod for MyOtherPOD { }
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Alpha(pub MyOtherPOD);
-    
-    #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum PlainEnum
-    {
-        F1 = 0,
-        F2 = 1,
-    }
-    
-    #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum BetterEnum
-    {
-        A = 0,
-        B = 1,
-        DEFAULT = 255,
-    }
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct MyFlags
-    {
-        pub is_thing: u8,
-        pub another_thing: u8,
-        pub some_stuff: PlainEnum,
-    }
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct SmallSeq<'a>
-    {
-        pub list: DataView<'a>,
-    }
-    
-    pub type MyPODFixedList = [MyPOD; 8];
-    pub type MyPODFixedListView<'a> = &'a [MyPOD];
-    
-    pub type MyOtherPODDynListView<'a> = &'a [MyOtherPOD];
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct ComplexSeq<'a>
-    {
-        pub flags: MyFlags,
-        pub list: MyPODFixedListView<'a>,
-        pub other_list: MyOtherPODDynListView<'a>,
-    }
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub enum MyVariant<'a>
-    {
-        MyPOD_1(&'a MyPOD),
-        MyOtherPOD_2(&'a MyOtherPOD),
-        void_3,
-        SmallSeq_4(&'a SmallSeq<'a>),
-        ComplexSeq_5(&'a ComplexSeq<'a>),
-    }
-    
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Root<'a>
-    {
-        pub name: ShortStringView<'a>,
-        pub var: MyVariant<'a>,
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyPOD<W: Write>(writer: &mut W, value: &MyPOD) -> io::Result<()>
-    {
-        writer.write_all(bytemuck::bytes_of(value))
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_FixedString<W: Write>(writer: &mut W, values: &FixedStringView<'_>) -> io::Result<()>
-    {
-        if values.len() != 4 { return Err(invalid_data("unexpected fixed array length")); }
-        writer.write_all(bytemuck::cast_slice(values))?;
+        self.name.jaw_write(writer)?;
+        self.var.jaw_write(writer)?;
         Ok(())
     }
-    
-    #[allow(non_snake_case)]
-    pub fn write_ShortString<W: Write>(writer: &mut W, values: &ShortStringView<'_>) -> io::Result<()>
+}
+impl<'a> JawWrite for RootView<'a>
+{
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
-        let len = values.len();
-        let max_len: usize = 255usize;
-        // Fail instead of truncating if the vector does not fit in the count type.
-        if len > max_len { return Err(invalid_data("array length too large to encode")); }
-        let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
-        write_u8(writer, count as _)?;
-        writer.write_all(bytemuck::cast_slice(values))?;
+        self.name.jaw_write(writer)?;
+        self.var.jaw_write(writer)?;
         Ok(())
     }
-    
-    #[allow(non_snake_case)]
-    pub fn write_Data<W: Write>(writer: &mut W, values: &DataView<'_>) -> io::Result<()>
-    {
-        let len = values.len();
-        let max_len: usize = 255usize;
-        // Fail instead of truncating if the vector does not fit in the count type.
-        if len > max_len { return Err(invalid_data("array length too large to encode")); }
-        let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
-        write_u8(writer, count as _)?;
-        writer.write_all(bytemuck::cast_slice(values))?;
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyOtherPOD<W: Write>(writer: &mut W, value: &MyOtherPOD) -> io::Result<()>
-    {
-        writer.write_all(bytemuck::bytes_of(value))
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_Alpha<W: Write>(writer: &mut W, value: &Alpha) -> io::Result<()>
-    {
-        write_MyOtherPOD(writer, &value.0)?;
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_PlainEnum<W: Write>(writer: &mut W, value: &PlainEnum) -> io::Result<()>
-    {
-        write_u8(writer, *value as _)
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_BetterEnum<W: Write>(writer: &mut W, value: &BetterEnum) -> io::Result<()>
-    {
-        write_u8(writer, *value as _)
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyFlags<W: Write>(writer: &mut W, value: &MyFlags) -> io::Result<()>
-    {
-        let mut raw: u128 = 0;
-        raw |= ((value.is_thing as u128) & 0x1) << 0;
-        raw |= ((value.another_thing as u128) & 0x3) << 1;
-        raw |= ((value.some_stuff as u128) & 0x3) << 3;
-        write_u8(writer, raw as u8)
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_SmallSeq<W: Write>(writer: &mut W, value: &SmallSeq<'_>) -> io::Result<()>
-    {
-        write_Data(writer, &value.list)?;
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyPODFixedList<W: Write>(writer: &mut W, values: &MyPODFixedListView<'_>) -> io::Result<()>
-    {
-        if values.len() != 8 { return Err(invalid_data("unexpected fixed array length")); }
-        for v in *values
-        {
-            write_MyPOD(writer, v)?;
-        }
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyOtherPODDynList<W: Write>(writer: &mut W, values: &MyOtherPODDynListView<'_>) -> io::Result<()>
-    {
-        let len = values.len();
-        let max_len: usize = 65535usize;
-        // Fail instead of truncating if the vector does not fit in the count type.
-        if len > max_len { return Err(invalid_data("array length too large to encode")); }
-        let count: u64 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
-        write_u16(writer, count as _)?;
-        for v in *values
-        {
-            write_MyOtherPOD(writer, v)?;
-        }
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_ComplexSeq<W: Write>(writer: &mut W, value: &ComplexSeq<'_>) -> io::Result<()>
-    {
-        write_MyFlags(writer, &value.flags)?;
-        write_MyPODFixedList(writer, &value.list)?;
-        write_MyOtherPODDynList(writer, &value.other_list)?;
-        Ok(())
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_MyVariant<W: Write>(writer: &mut W, value: &MyVariant<'_>) -> io::Result<()>
-    {
-        match value
-        {
-            MyVariant::MyPOD_1(inner) =>
-            {
-                write_u8(writer, 1)?;
-                write_MyPOD(writer, inner)?;
-                Ok(())
-            }
-            ,
-            MyVariant::MyOtherPOD_2(inner) =>
-            {
-                write_u8(writer, 2)?;
-                write_MyOtherPOD(writer, inner)?;
-                Ok(())
-            }
-            ,
-            MyVariant::void_3 =>
-            {
-                write_u8(writer, 3)?;
-                Ok(())
-            }
-            ,
-            MyVariant::SmallSeq_4(inner) =>
-            {
-                write_u8(writer, 4)?;
-                write_SmallSeq(writer, inner)?;
-                Ok(())
-            }
-            ,
-            MyVariant::ComplexSeq_5(inner) =>
-            {
-                write_u8(writer, 5)?;
-                write_ComplexSeq(writer, inner)?;
-                Ok(())
-            }
-            ,
-        }
-    }
-    
-    #[allow(non_snake_case)]
-    pub fn write_Root<W: Write>(writer: &mut W, value: &Root<'_>) -> io::Result<()>
-    {
-        write_ShortString(writer, &value.name)?;
-        write_MyVariant(writer, &value.var)?;
-        Ok(())
-    }
-    
 }

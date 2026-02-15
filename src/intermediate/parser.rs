@@ -1,12 +1,9 @@
-use std::{
-    iter::Peekable,
-    io::BufRead,
-};
+use std::{io::BufRead, iter::Peekable};
 
 use super::{
     ast::{
-        Alias, Bitfld, BitfldMember, DynamicArray, Enum, EnumMember, FixedArray, Import, Module,
-        Pack, Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
+        Bitfld, BitfldMember, DynamicArray, Enum, EnumMember, FixedArray, Import, Module, Pack,
+        Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
     },
     error::IntermediateError,
     source::{Position, SourceCode, SourceLocation},
@@ -294,11 +291,6 @@ impl Module {
             );
 
             match decl_type {
-                "alias" => definitions.push(Type {
-                    defined_at: defined_at.clone(),
-                    kind: reader.parse_alias(extra, line_number)?,
-                    ident: TypeName::from_string(defined_at, decl_name)?,
-                }),
                 "pack" => definitions.push(Type {
                     defined_at: defined_at.clone(),
                     kind: reader.parse_pack(extra, line_number)?,
@@ -554,24 +546,6 @@ impl Reader {
         } else {
             None
         }
-    }
-
-    /// Parses an `alias` declaration body.
-    fn parse_alias(
-        &mut self,
-        extra: Option<&str>,
-        line: usize,
-    ) -> Result<TypeKind, IntermediateError> {
-        let Some(extra) = extra else {
-            return Err(IntermediateError::MissingDeclarationDetail {
-                line: self.code.location(line, 0),
-                kind: "Alias",
-            });
-        };
-
-        Ok(TypeKind::Alias(Alias {
-            other: TypeName::from_string(self.code.location(line, 0), extra.trim())?,
-        }))
     }
 
     /// Parses a `pack` declaration body.

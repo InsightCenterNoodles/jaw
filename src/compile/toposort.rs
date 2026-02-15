@@ -12,7 +12,6 @@ use super::{Type, TypeID, TypeKind};
 /// can be represented safely.
 fn layout_dependencies(ty: &Type) -> Vec<TypeID> {
     match &ty.kind {
-        TypeKind::Alias(alias) => vec![alias.other],
         TypeKind::Pack(pack) => pack.members.iter().map(|m| m.ty).collect(),
         TypeKind::Enum(enm) => vec![enm.underlying],
         TypeKind::Bitfld(bitfld) => {

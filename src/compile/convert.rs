@@ -5,8 +5,8 @@ use anyhow::Context;
 use crate::intermediate;
 
 use super::{
-    Alias, Bitfld, BitfldMember, DynamicArray, FixedArray, Pack, Sequence, StructMember, Type,
-    TypeID, TypeKind, Variant, VariantMember,
+    Bitfld, BitfldMember, DynamicArray, FixedArray, Pack, Sequence, StructMember, Type, TypeID,
+    TypeKind, Variant, VariantMember,
 };
 
 pub(super) struct TypeIDAllocator {
@@ -59,11 +59,6 @@ pub(super) fn convert(
     let this_id = state.lookup(&ty.ident)?;
 
     let new_kind = match ty.kind {
-        intermediate::TypeKind::Alias(alias) => TypeKind::Alias(Alias {
-            other: state
-                .lookup(&alias.other)
-                .with_context(|| format!("while resolving alias {}", ty.ident))?,
-        }),
         intermediate::TypeKind::Pack(pack) => TypeKind::Pack(Pack {
             members: pack
                 .members

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -217,7 +217,6 @@ fn dependency_closure(
 
 fn direct_dependencies(ty: &Type) -> Vec<TypeName> {
     match &ty.kind {
-        TypeKind::Alias(alias) => vec![alias.other.clone()],
         TypeKind::Pack(pack) => pack.members.iter().map(|m| m.ty.clone()).collect(),
         TypeKind::Enum(enm) => vec![enm.ty.clone()],
         TypeKind::Bitfld(bitfld) => {

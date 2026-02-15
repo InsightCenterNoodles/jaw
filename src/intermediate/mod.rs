@@ -8,7 +8,7 @@ mod source;
 mod tests;
 
 pub use ast::{
-    Alias, Bitfld, BitfldMember, DynamicArray, Enum, EnumMember, FixedArray, Import, Module, Pack,
+    Bitfld, BitfldMember, DynamicArray, Enum, EnumMember, FixedArray, Import, Module, Pack,
     Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
 };
 pub use error::IntermediateError;

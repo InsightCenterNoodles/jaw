@@ -211,14 +211,7 @@ def main() -> None:
         example.read_BetterEnum(example.Reader(bytes([2]))) == example.BetterEnum.DEFAULT,
         "BetterEnum default",
     )
-    w = example.Writer()
-    alpha = example.MyOtherPOD(example.MyPOD(1, 2), [1, 2, 3, 4])
-    example.write_Alpha(w, alpha)
-    alpha2 = example.read_Alpha(example.Reader(w.getvalue()))
-    demand(int(alpha2.first.a_thing) == int(alpha.first.a_thing), "Alpha.first.a_thing")
-    demand(int(alpha2.first.b_thing) == int(alpha.first.b_thing), "Alpha.first.b_thing")
-    for j in range(4):
-        demand(int(alpha2.second[j]) == int(alpha.second[j]), f"Alpha.second[{j}]")
+    
     print(f"All checks passed ({len(expected)} messages)")
     if args.dump:
         with open(args.dump, "wb") as f:

@@ -158,7 +158,7 @@ variant V : u8
     codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
     let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
 
-    assert!(rust_src.contains("pub enum V<'a>"));
+    assert!(rust_src.contains("pub enum VView<'a>"));
     assert!(
         rust_src.contains("P_1(&'a P),"),
         "write variant payload reference should use the enum lifetime"

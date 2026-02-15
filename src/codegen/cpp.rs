@@ -87,12 +87,11 @@ impl<'a> CppContext<'a> {
         }
     }
 
-    /// Resolves a `TypeID` to a primitive, following aliases and enums.
+    /// Resolves a `TypeID` to a primitive, following enums.
     fn underlying_primitive(&self, id: TypeID) -> anyhow::Result<Primitive> {
         let ty = self.world.lookup(id);
         match &ty.kind {
             TypeKind::Primitive(p) => Ok(*p),
-            TypeKind::Alias(a) => self.underlying_primitive(a.other),
             TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
             _ => bail!("expected primitive-compatible type for {}", ty.ident),
         }
@@ -111,38 +110,6 @@ impl<'a> CppContext<'a> {
         }
     }
 
-    /// Resolves aliases transitively.
-    fn resolve_alias(&self, id: TypeID) -> TypeID {
-        let mut cur = id;
-        loop {
-            let ty = self.world.lookup(cur);
-            match &ty.kind {
-                TypeKind::Alias(a) => cur = a.other,
-                _ => return cur,
-            }
-        }
-    }
-
-    // fn is_pod(&self, id: TypeID) -> bool {
-    //     let resolved = self.resolve_alias(id);
-    //     let ty = self.world.lookup(resolved);
-
-    //     // println!("IS POD {ty:?}");
-
-    //     match &ty.kind {
-    //         TypeKind::Alias(alias) => self.is_pod(alias.other),
-    //         TypeKind::Pack(_) => true,
-    //         TypeKind::Enum(_) => true,
-    //         TypeKind::Bitfld(_) => true,
-    //         TypeKind::Variant(_) => false,
-    //         TypeKind::Sequence(_) => false,
-    //         TypeKind::DynamicArray(_) => false,
-    //         TypeKind::FixedArray(fixed_array) => self.is_pod(fixed_array.value_type),
-    //         TypeKind::Primitive(_) => true,
-    //         TypeKind::Void => true,
-    //     }
-    // }
-
     /// Returns whether an array can use the bulk read/write path.
     fn can_bulk_array(&self, id: TypeID) -> bool {
         let ty = self.world.lookup(id);
@@ -151,14 +118,14 @@ impl<'a> CppContext<'a> {
 
         match &ty.kind {
             TypeKind::DynamicArray(dynamic_array) => {
-                let elem = self.resolve_alias(dynamic_array.value_type);
+                let elem = dynamic_array.value_type;
                 matches!(
                     &self.world.lookup(elem).kind,
                     TypeKind::Primitive(_) | TypeKind::Pack(_)
                 )
             }
             TypeKind::FixedArray(fixed_array) => {
-                let elem = self.resolve_alias(fixed_array.value_type);
+                let elem = fixed_array.value_type;
                 matches!(
                     &self.world.lookup(elem).kind,
                     TypeKind::Primitive(_) | TypeKind::Pack(_)
@@ -329,7 +296,6 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
                 ty.kind,
                 TypeKind::Primitive(_)
                     | TypeKind::Void
-                    | TypeKind::Alias(_)
                     | TypeKind::DynamicArray(_)
                     | TypeKind::FixedArray(_)
             ) {
@@ -340,20 +306,14 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
 
         // Then emit alias-like type definitions (including arrays) after the forward decls.
         for (id, ty) in ctx.types() {
-            if !matches!(
-                ty.kind,
-                TypeKind::Alias(_) | TypeKind::DynamicArray(_) | TypeKind::FixedArray(_)
-            ) {
+            if !matches!(ty.kind, TypeKind::DynamicArray(_) | TypeKind::FixedArray(_)) {
                 continue;
             }
             emit_type_def_fwd(ctx, &mut block, id, ty, ns)?;
         }
 
         for (_, ty) in ctx.types() {
-            if matches!(
-                ty.kind,
-                TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Alias(_)
-            ) {
+            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
                 continue;
             }
             emit_forward_decls(&mut block, ty, ns);
@@ -379,10 +339,7 @@ fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyho
         block.newline();
 
         for (_, ty) in ctx.types() {
-            if matches!(
-                ty.kind,
-                TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Alias(_)
-            ) {
+            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
                 continue;
             }
             emit_forward_decls(&mut block, ty, ns);
@@ -415,10 +372,6 @@ fn emit_type_def_fwd(
     let name = ctx.name_of(id, ns).to_string();
 
     match &ty.kind {
-        TypeKind::Alias(alias) => {
-            let target = ctx.cpp_type(alias.other, ns)?;
-            out.wln(&format!("using {} = {};", name, target));
-        }
         TypeKind::Pack(_) => {
             out.wln(&format!("struct {};", name));
         }
@@ -477,10 +430,6 @@ fn emit_type_def(
     let name = ctx.name_of(id, ns).to_string();
 
     match &ty.kind {
-        TypeKind::Alias(alias) => {
-            let target = ctx.cpp_type(alias.other, ns)?;
-            out.wln(&format!("using {} = {};", name, target));
-        }
         TypeKind::Pack(pack) => {
             out.wln("#pragma pack(push, 1)");
             out.wln(&format!("struct {}", name));
@@ -602,10 +551,7 @@ fn emit_type_def(
 
 /// Emits any additional forward declarations needed by a type definition.
 fn emit_forward_decls(out: &mut impl Sink, ty: &Type, ns: Namespace) {
-    if matches!(
-        ty.kind,
-        TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Alias(_)
-    ) {
+    if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
         return;
     }
 
@@ -633,9 +579,6 @@ fn emit_read_impl(
 ) -> anyhow::Result<()> {
     let name = ctx.name_of(id, Namespace::Read).to_string();
     match &ty.kind {
-        TypeKind::Alias(_alias) => {
-            // aliases use the underlying implementation
-        }
         TypeKind::Pack(_) => {
             out.wln(&format!(
                 "template <class Reader> inline bool read(Reader& reader, {}& value)",
@@ -842,9 +785,6 @@ fn emit_write_impl(
 ) -> anyhow::Result<()> {
     let name = ctx.name_of(id, Namespace::Write).to_string();
     match &ty.kind {
-        TypeKind::Alias(_alias) => {
-            // aliases use the underlying implementation
-        }
         TypeKind::Pack(_) => {
             out.wln(&format!(
                 "template <class Writer> inline bool write(Writer& writer, {} const& value)",

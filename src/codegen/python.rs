@@ -60,18 +60,6 @@ impl<'a> PythonContext<'a> {
         self.world.iter()
     }
 
-    /// Resolves aliases transitively.
-    fn resolve_alias(&self, id: TypeID) -> TypeID {
-        let mut cur = id;
-        loop {
-            let ty = self.world.lookup(cur);
-            match &ty.kind {
-                TypeKind::Alias(a) => cur = a.other,
-                _ => return cur,
-            }
-        }
-    }
-
     /// Returns whether a `TypeID` corresponds to `void`.
     fn is_void(&self, id: TypeID) -> bool {
         matches!(self.world.lookup(id).kind, TypeKind::Void)
@@ -79,19 +67,17 @@ impl<'a> PythonContext<'a> {
 
     /// Returns the primitive for a type if it is directly primitive (after alias resolution).
     fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
-        let resolved = self.resolve_alias(id);
-        match self.world.lookup(resolved).kind {
+        match self.world.lookup(id).kind {
             TypeKind::Primitive(p) => Some(p),
             _ => None,
         }
     }
 
-    /// Returns the primitive for a type following aliases and enums, if any.
+    /// Returns the primitive for a type following enums, if any.
     fn underlying_primitive(&self, id: TypeID) -> Option<Primitive> {
         let ty = self.world.lookup(id);
         match &ty.kind {
             TypeKind::Primitive(p) => Some(*p),
-            TypeKind::Alias(a) => self.underlying_primitive(a.other),
             TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
             _ => None,
         }
@@ -106,7 +92,6 @@ impl<'a> PythonContext<'a> {
                 Datatype::Integer => "int".to_string(),
             },
             TypeKind::Void => "None".into(),
-            TypeKind::Alias(alias) => return self.type_hint(alias.other),
             TypeKind::Pack(_) | TypeKind::Enum(_) | TypeKind::Bitfld(_) => self.name_of(id),
             TypeKind::Variant(_) => self.name_of(id),
             TypeKind::Sequence(_) => self.name_of(id),
@@ -283,11 +268,6 @@ fn emit_type_definition(
 ) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
-        TypeKind::Alias(alias) => {
-            let target_hint = ctx.type_hint(alias.other)?;
-            out.wln(&format!("{name} = {target_hint}"));
-            out.newline();
-        }
         TypeKind::Enum(enm) => {
             out.wln("@enum.unique");
             out.wln(&format!("class {name}(enum.IntEnum):"));
@@ -398,15 +378,6 @@ fn emit_type_definition(
 fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
-        TypeKind::Alias(alias) => {
-            out.wln(&format!("def read_{name}(reader):"));
-            let mut idt = out.indent();
-            idt.wln(&format!(
-                "return {}",
-                read_expr(ctx, alias.other, "reader")?
-            ));
-            idt.newline();
-        }
         TypeKind::Pack(pack) => {
             out.wln(&format!("def read_{name}(reader):"));
             let mut idt = out.indent();
@@ -562,12 +533,6 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
 fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
-        TypeKind::Alias(alias) => {
-            out.wln(&format!("def write_{name}(writer, value):"));
-            let mut idt = out.indent();
-            write_value(ctx, &mut idt, alias.other, "value")?;
-            idt.newline();
-        }
         TypeKind::Pack(pack) => {
             out.wln(&format!("def write_{name}(writer, value):"));
             let mut idt = out.indent();
@@ -693,7 +658,6 @@ fn read_expr(ctx: &PythonContext, id: TypeID, reader_ident: &str) -> Result<Stri
             format!("{reader_ident}.{method}()")
         }
         TypeKind::Void => "None".into(),
-        TypeKind::Alias(alias) => return read_expr(ctx, alias.other, reader_ident),
         _ => format!("read_{}({reader_ident})", ctx.name_of(id)),
     };
     Ok(expr)
@@ -715,7 +679,6 @@ fn write_value(
         TypeKind::Void => {
             // nothing to write
         }
-        TypeKind::Alias(alias) => write_value(ctx, out, alias.other, value_expr)?,
         _ => {
             out.wln(&format!(
                 "write_{}(writer, {})",
@@ -739,9 +702,6 @@ fn emit_bitfield_member_read(
     match &ty.kind {
         TypeKind::Primitive(_) => {
             out.wln(&format!("{field_name} = int({value_expr})"));
-        }
-        TypeKind::Alias(alias) => {
-            emit_bitfield_member_read(ctx, out, field_name, alias.other, value_expr)?
         }
         TypeKind::Enum(enm) => {
             let enum_name = ctx.name_of(ty_id);

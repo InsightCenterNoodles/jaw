@@ -7,8 +7,8 @@ use thiserror::Error;
 use crate::intermediate::{SourceLocation, TypeName};
 
 use super::{
-    Alias, Bitfld, BitfldMember, Datatype, DynamicArray, Enum, FixedArray, Pack, Primitive,
-    Sequence, Signedness, StructMember, Type, TypeID, TypeKind, Variant, World,
+    Bitfld, BitfldMember, Datatype, DynamicArray, Enum, FixedArray, Pack, Primitive, Sequence,
+    Signedness, StructMember, Type, TypeID, TypeKind, Variant, World,
 };
 
 #[derive(Debug)]
@@ -47,7 +47,6 @@ fn verify_is_pod(world: &World, tid: TypeID) -> anyhow::Result<()> {
     let ctx = || format!("while checking {}", Typeref::from(ty));
 
     match &ty.kind {
-        TypeKind::Alias(alias) => verify_is_pod(world, alias.other).with_context(ctx)?,
         TypeKind::Pack(pack) => {
             for p in &pack.members {
                 verify_is_pod(world, p.ty).with_context(ctx)?;
@@ -74,7 +73,6 @@ fn verify_is_int_of(world: &World, tid: TypeID, sign: Signedness) -> anyhow::Res
     let ctx = || format!("while checking {}", Typeref::from(ty));
 
     match &ty.kind {
-        TypeKind::Alias(alias) => verify_is_int_of(world, alias.other, sign).with_context(ctx),
         TypeKind::Primitive(x) if matches!(x.dtype, Datatype::Integer) && x.sign == sign => Ok(*x),
         _ => Err(anyhow!(
             "type {} is not integer with sign {sign:?}",
@@ -91,17 +89,9 @@ fn verify_is_integer(world: &World, tid: TypeID) -> anyhow::Result<Primitive> {
     let ctx = || format!("while checking {}", Typeref::from(ty));
 
     match &ty.kind {
-        TypeKind::Alias(alias) => verify_is_integer(world, alias.other).with_context(ctx),
         TypeKind::Primitive(x) if matches!(x.dtype, Datatype::Integer) => Ok(*x),
         _ => Err(anyhow!("type is not integer").context(ctx())),
     }
-}
-
-/// Verifies alias constraints (currently no additional validation).
-fn verify_alias(_world: &World, _ty: &Type, _value: &Alias) -> anyhow::Result<()> {
-    // nothing to do
-
-    Ok(())
 }
 
 // verify unique names?
@@ -256,16 +246,6 @@ fn verify_bitfield_member_type(world: &World, member: &BitfldMember) -> anyhow::
     let ctx = || format!("while checking {}", Typeref::from(ty));
 
     match &ty.kind {
-        TypeKind::Alias(alias) => verify_bitfield_member_type(
-            world,
-            &BitfldMember {
-                name: member.name.clone(),
-                underlying: alias.other,
-                range: member.range.clone(),
-                defined_at: member.defined_at.clone(),
-            },
-        )
-        .with_context(ctx),
         TypeKind::Enum(enm) => {
             verify_is_integer(world, enm.underlying).with_context(ctx)?;
             Ok(())
@@ -343,7 +323,6 @@ fn verify_fixarray(world: &World, ty: &Type, value: &FixedArray) -> anyhow::Resu
 pub(super) fn verify(world: World) -> anyhow::Result<World> {
     for item in world.definitions.values() {
         match &item.kind {
-            TypeKind::Alias(v) => verify_alias(&world, item, v)?,
             TypeKind::Pack(v) => verify_pack(&world, item, v)?,
             TypeKind::Enum(v) => verify_enum(&world, item, v)?,
             TypeKind::Bitfld(v) => verify_bitfld(&world, item, v)?,

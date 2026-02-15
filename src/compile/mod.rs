@@ -7,9 +7,8 @@ mod verify;
 mod tests;
 
 pub use types::{
-    Alias, BitWidth, Bitfld, BitfldMember, Datatype, DynamicArray, Enum, FixedArray, Pack,
-    Primitive, Sequence, Signedness, StructMember, Type, TypeID, TypeKind, Variant, VariantMember,
-    World,
+    BitWidth, Bitfld, BitfldMember, Datatype, DynamicArray, Enum, FixedArray, Pack, Primitive,
+    Sequence, Signedness, StructMember, Type, TypeID, TypeKind, Variant, VariantMember, World,
 };
 
 use anyhow::bail;

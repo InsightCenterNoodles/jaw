@@ -42,7 +42,7 @@ fn intermediate() {
         .map(|x| (x.ident.clone(), x))
         .collect();
 
-    assert_eq!(m.len(), 15);
+    assert_eq!(m.len(), 14);
 
     let quick_typename = |name: &str| -> TypeName {
         TypeName::from_string(
@@ -313,7 +313,11 @@ seq Local
     .unwrap();
 
     let module = load_module_with_imports(&root_path).unwrap();
-    let names: Vec<&str> = module.definitions.iter().map(|d| d.ident.as_str()).collect();
+    let names: Vec<&str> = module
+        .definitions
+        .iter()
+        .map(|d| d.ident.as_str())
+        .collect();
     assert!(names.contains(&"Local"));
     assert!(names.contains(&"CommonA"));
     assert!(names.contains(&"CommonB"));
