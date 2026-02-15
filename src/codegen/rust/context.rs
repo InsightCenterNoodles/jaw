@@ -1,10 +1,10 @@
 use crate::{
     GlobalOptions,
     codegen::Sink,
-    compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World},
+    compile::{Primitive, Type, TypeID, TypeKind, World},
 };
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use std::collections::HashMap;
 

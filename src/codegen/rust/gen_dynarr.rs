@@ -75,7 +75,7 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
                 {
                     let mut body = idt.indent();
                     let expr = read_expr(ctx, arr.value_type);
-                    body.wln(&format!("out.push({expr}?);"));
+                    body.wln(&format!("out.push({expr});"));
                 }
             }
         }
@@ -108,7 +108,31 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
     let max_len = max_len_for_size(ctx, arr.size_type)?;
 
     emit_jwrite(&plain_type, None, out, |idt| {
-        idt.wln(&format!("{view_type}(&self.0).jaw_write(writer)"));
+        //let write_tag = write_primitive_method(ctx, variant.discriminant)?;
+        idt.wln("let len = self.0.len();");
+        idt.wln(&format!(
+            "let max_len: usize = {}usize;",
+            max_len.min(usize::MAX as u128)
+        ));
+        // Fail instead of truncating if the vector does not fit in the count type.
+        idt.wln(
+            "if len > max_len { return Err(invalid_data(\"array length too large to encode\")); }",
+        );
+        idt.wln(&format!(
+            "let count: {} = len.try_into().map_err(|_| invalid_data(\"array length too large to encode\"))?;",
+            ctx.name_of(arr.size_type)
+        ));
+        idt.wln(&format!("{};", write_expr("count")));
+        if ctx.direct_primitive(arr.value_type).is_some() {
+            idt.wln("writer.write_all(bytemuck::cast_slice(&self.0))?;");
+        } else {
+            idt.wln("for v in &self.0");
+            {
+                let mut body = idt.indent();
+                body.wln(&write_expr("v"));
+            }
+        }
+        idt.wln("Ok(())");
         Ok(())
     })?;
 
@@ -119,7 +143,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
             "let max_len: usize = {}usize;",
             max_len.min(usize::MAX as u128)
         ));
-        idt.wln("// Fail instead of truncating if the vector does not fit in the count type.");
+        // Fail instead of truncating if the vector does not fit in the count type."
         idt.wln(
             "if len > max_len { return Err(invalid_data(\"array length too large to encode\")); }",
         );

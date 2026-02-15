@@ -34,6 +34,7 @@ dyn_array Pods : u32 * MyPOD
     );
     let opts = GlobalOptions {
         guard_array_size: Some(16),
+        ..Default::default()
     };
 
     // Rust

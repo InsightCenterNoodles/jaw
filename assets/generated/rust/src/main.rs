@@ -5,6 +5,9 @@ use std::path::PathBuf;
 #[allow(dead_code)]
 mod example;
 
+#[allow(dead_code)]
+mod any;
+
 use example::*;
 
 fn demand(cond: bool, label: &str) {

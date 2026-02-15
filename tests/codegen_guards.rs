@@ -116,6 +116,7 @@ dyn_array ObjArr : u32 * MyPOD
     );
     let opts = GlobalOptions {
         guard_array_size: Some(16),
+        ..Default::default()
     };
 
     // Rust: should not emit C++ tokens when guard enabled

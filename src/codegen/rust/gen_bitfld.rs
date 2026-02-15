@@ -57,7 +57,7 @@ pub fn emit_bitfld(
 fn reader(
     ctx: &RustContext,
     out: &mut impl Sink,
-    id: TypeID,
+    _id: TypeID,
     kind: &Bitfld,
     name: &String,
 ) -> Result<()> {
