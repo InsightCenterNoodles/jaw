@@ -142,8 +142,6 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
 
-    let lt = ctx.view_needs_lifetime(id).then(|| "'a");
-
     emit_jwrite(&plain_type, None, out, |idt| {
         //let write_tag = write_primitive_method(ctx, variant.discriminant)?;
         let disc_type = ctx.name_of(variant.discriminant);
@@ -180,7 +178,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         Ok(())
     })?;
 
-    emit_jwrite(&view_type, lt, out, |idt| {
+    emit_jwrite(&view_type, Some("'a"), out, |idt| {
         //let write_tag = write_primitive_method(ctx, variant.discriminant)?;
         let disc_type = ctx.name_of(variant.discriminant);
         idt.wln("match self");

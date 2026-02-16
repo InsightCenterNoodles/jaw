@@ -84,8 +84,6 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, sequence: &Sequenc
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
 
-    let lt = ctx.view_needs_lifetime(id).then(|| "'a");
-
     emit_jwrite(&plain_type, None, out, |idt| {
         for m in &sequence.members {
             let expr = write_expr(&format!("self.{}", m.name));
@@ -95,6 +93,8 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, sequence: &Sequenc
         idt.wln("Ok(())");
         Ok(())
     })?;
+
+    let lt = ctx.view_needs_lifetime(id).then(|| "'a");
 
     emit_jwrite(&view_type, lt, out, |idt| {
         for m in &sequence.members {
