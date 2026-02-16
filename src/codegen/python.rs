@@ -69,6 +69,7 @@ impl<'a> PythonContext<'a> {
     fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
         match self.world.lookup(id).kind {
             TypeKind::Primitive(p) => Some(p),
+            TypeKind::Const(ref c) => self.direct_primitive(c.ty),
             _ => None,
         }
     }
@@ -79,6 +80,7 @@ impl<'a> PythonContext<'a> {
         match &ty.kind {
             TypeKind::Primitive(p) => Some(*p),
             TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
+            TypeKind::Const(c) => self.underlying_primitive(c.ty),
             _ => None,
         }
     }
@@ -92,7 +94,9 @@ impl<'a> PythonContext<'a> {
                 Datatype::Integer => "int".to_string(),
             },
             TypeKind::Void => "None".into(),
-            TypeKind::Pack(_) | TypeKind::Enum(_) | TypeKind::Bitfld(_) => self.name_of(id),
+            TypeKind::Pack(_) | TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Const(_) => {
+                self.name_of(id)
+            }
             TypeKind::Variant(_) => self.name_of(id),
             TypeKind::Sequence(_) => self.name_of(id),
             TypeKind::DynamicArray(arr) => {
@@ -368,6 +372,17 @@ fn emit_type_definition(
         TypeKind::DynamicArray(_) | TypeKind::FixedArray(_) => {
             // Arrays are represented with built-in containers; no class emitted.
         }
+        TypeKind::Const(c) => {
+            let hint = ctx.type_hint(c.ty)?;
+
+            let value = match c.value {
+                crate::compile::PrimitiveLiteral::Integer(v) => v.to_string(),
+                crate::compile::PrimitiveLiteral::Real(v) => v.to_string(),
+            };
+
+            out.wln(&format!("{name} : {hint} = {value}"));
+            out.newline();
+        }
         TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
@@ -523,7 +538,7 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             }
             idt.newline();
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     Ok(())
@@ -644,7 +659,7 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             }
             idt.newline();
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }

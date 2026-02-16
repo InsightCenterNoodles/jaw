@@ -10,10 +10,6 @@ pub trait JawWrite {
     fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>;
 }
 
-fn invalid_data(msg: impl Into<String>) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, msg.into())
-}
-
 impl JawRead for u8 {
     #[inline]
     fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self> {
@@ -154,6 +150,12 @@ impl JawWrite for f64 {
         writer.write_all(&self.to_le_bytes())
     }
 }
+
+fn invalid_data(msg: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, msg.into())
+}
+
+pub const MY_CONST: u64 = 100;
 
 #[repr(C, packed(1))]
 pub struct MyPOD {

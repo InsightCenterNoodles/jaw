@@ -239,6 +239,7 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeName> {
             ]
         }
         TypeKind::FixedArray(fixed_array) => vec![fixed_array.value_type.clone()],
+        TypeKind::Const(c) => vec![c.ty.clone()],
     }
 }
 

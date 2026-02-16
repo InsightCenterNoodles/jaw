@@ -138,3 +138,44 @@ fixed_array MyPODFixedList : 8 * MyPOD
 
     let _ = fs::remove_file(&cpp_out);
 }
+
+#[test]
+fn const_aliases_are_emitted_in_all_generators() {
+    let world = world_from(
+        r#"
+const BYTE : u8 = 10
+"#,
+    );
+
+    // Rust
+    let rust_out = temp_path("rust_const_alias", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(
+        rust_src.contains("pub const BYTE : u8 = 10;"),
+        "rust should emit type alias for const"
+    );
+    let _ = fs::remove_file(&rust_out);
+
+    // Python
+    let py_out = temp_path("python_const_alias", "py");
+    codegen::emit_python(&world, &Default::default(), &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(
+        py_src.contains("BYTE : int = 10"),
+        "python should emit alias for const"
+    );
+    let _ = fs::remove_file(&py_out);
+
+    // C++
+    let cpp_out = temp_path("cpp_const_alias", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+
+    println!("{cpp_src}");
+    assert!(
+        cpp_src.contains("constexpr inline std::uint8_t BYTE = 10;"),
+        "cpp should emit alias for const"
+    );
+    let _ = fs::remove_file(&cpp_out);
+}

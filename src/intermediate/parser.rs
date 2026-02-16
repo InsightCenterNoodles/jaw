@@ -2,8 +2,8 @@ use std::{io::BufRead, iter::Peekable};
 
 use super::{
     ast::{
-        Bitfld, BitfldMember, DynamicArray, Enum, EnumMember, FixedArray, Import, Module, Pack,
-        Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
+        Bitfld, BitfldMember, Const, DynamicArray, Enum, EnumMember, FixedArray, Import, Module,
+        Pack, Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
     },
     error::IntermediateError,
     source::{Position, SourceCode, SourceLocation},
@@ -324,6 +324,11 @@ impl Module {
                 "dyn_array" => definitions.push(Type {
                     defined_at: defined_at.clone(),
                     kind: reader.parse_dyn_array(extra, line_number)?,
+                    ident: TypeName::from_string(defined_at, decl_name)?,
+                }),
+                "const" => definitions.push(Type {
+                    defined_at: defined_at.clone(),
+                    kind: reader.parse_const(extra, line_number)?,
                     ident: TypeName::from_string(defined_at, decl_name)?,
                 }),
                 _ => {
@@ -713,6 +718,34 @@ impl Reader {
             size_type,
             value_type,
         }))
+    }
+
+    /// Parses a `const` declaration body.
+    fn parse_const(
+        &mut self,
+        extra: Option<&str>,
+        line: usize,
+    ) -> Result<TypeKind, IntermediateError> {
+        let Some(extra) = extra else {
+            return Err(IntermediateError::MissingDeclarationDetail {
+                line: self.code.location(line, 0),
+                kind: "const",
+            });
+        };
+
+        let Some((ty, value)) = extra.split_once('=') else {
+            return Err(IntermediateError::MissingDeclarationDetail {
+                line: self.code.location(line, 0),
+                kind: "missing value",
+            });
+        };
+
+        let ty = ty.trim();
+        let value = value.trim().to_string();
+
+        let ty = TypeName::from_string(self.code.location(line, 0), ty)?;
+
+        Ok(TypeKind::Const(Const { ty, value }))
     }
 }
 

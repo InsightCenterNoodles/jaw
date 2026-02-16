@@ -113,6 +113,12 @@ pub struct FixedArray {
 }
 
 #[derive(Debug)]
+pub struct Const {
+    pub ty: TypeName,
+    pub value: String,
+}
+
+#[derive(Debug)]
 pub enum TypeKind {
     Pack(Pack),
     Enum(Enum),
@@ -121,6 +127,7 @@ pub enum TypeKind {
     Sequence(Sequence),
     DynamicArray(DynamicArray),
     FixedArray(FixedArray),
+    Const(Const),
 }
 
 #[derive(Debug)]

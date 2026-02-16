@@ -15,6 +15,9 @@
 
 # ==== Example
 
+# We have consts...
+const MY_CONST : u64 = 100
+
 # A pack is Plain Old Data and maps to a packed C struct (e.g., __attribute__((packed)) / #pragma pack(1)).
 # No padding is inserted; 1-byte alignment; intended to be read/written in a single operation; contents must be POD.
 pack MyPOD

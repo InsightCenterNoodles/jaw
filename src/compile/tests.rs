@@ -79,6 +79,25 @@ variant Any : u8
     compile(module).expect("compile should accept dynarray-based recursion");
 }
 
+/// Test: const declarations must target primitive types for now.
+#[test]
+fn const_target_must_be_primitive() {
+    let src = r#"
+pack P
+- a : u8
+
+const Bad : P = 10
+"#;
+
+    let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
+    let err = compile(module).expect_err("compile should reject non-primitive const target");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not primitive"),
+        "unexpected error message: {msg}"
+    );
+}
+
 /// Test: topological sorting is deterministic and stable.
 #[test]
 fn topological_sort_is_stable() {

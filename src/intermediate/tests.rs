@@ -42,7 +42,7 @@ fn intermediate() {
         .map(|x| (x.ident.clone(), x))
         .collect();
 
-    assert_eq!(m.len(), 14);
+    assert_eq!(m.len(), 15);
 
     let quick_typename = |name: &str| -> TypeName {
         TypeName::from_string(
@@ -269,6 +269,25 @@ from "other.jaw" use {Thing}
     let IntermediateError::ImportAfterDeclaration { .. } = err else {
         panic!("unexpected error kind: {err:?}");
     };
+}
+
+/// Test: `const` declarations parse with a single target type.
+#[test]
+fn const_declaration_is_parsed() {
+    let source = r#"
+const Byte : u8 = 1
+"#;
+
+    let module = Module::from_string("file".into(), source.into()).expect("parse module");
+    assert_eq!(module.definitions.len(), 1);
+
+    match &module.definitions[0].kind {
+        TypeKind::Const(c) => {
+            assert_eq!(module.definitions[0].ident.as_str(), "Byte");
+            assert_eq!(c.ty.as_str(), "u8");
+        }
+        other => panic!("Byte parsed as unexpected kind: {:?}", other),
+    }
 }
 
 fn unique_test_dir(name: &str) -> PathBuf {

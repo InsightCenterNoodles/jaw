@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fmt::Display, ops::RangeInclusive};
+use std::{collections::HashMap, fmt::Display, ops::RangeInclusive, str::FromStr};
 
-use anyhow::bail;
+use anyhow::{Error, bail};
 use itertools::Itertools;
 
 use crate::intermediate::{EnumMember, SourceLocation, TypeName};
@@ -88,6 +88,34 @@ impl FixedArray {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Const {
+    pub ty: TypeID,
+    pub value: PrimitiveLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PrimitiveLiteral {
+    Integer(i128),
+    Real(f64),
+}
+
+impl FromStr for PrimitiveLiteral {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(res) = i128::from_str(s) {
+            return Ok(Self::Integer(res));
+        }
+
+        if let Ok(res) = f64::from_str(s) {
+            return Ok(Self::Real(res));
+        }
+
+        bail!("unable to parse literal");
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BitWidth {
     W8,
@@ -157,6 +185,33 @@ impl Primitive {
 
         anyhow::bail!("value {v} cannot fit in a primitive of {}", self)
     }
+
+    /// Validates that an integer value fits into this primitive's representable range.
+    pub(crate) fn verify_can_fit_real(&self, v: f64) -> anyhow::Result<()> {
+        let Datatype::Float = self.dtype else {
+            anyhow::bail!("float cannot fit in a integer")
+        };
+
+        let bounds = match (self.width, self.sign) {
+            (BitWidth::W8, _) => {
+                bail!("f8 is not supported");
+            }
+            (BitWidth::W16, _) => {
+                bail!("f16 is not supported");
+            }
+            (_, Signedness::Unsigned) => {
+                bail!("floats are not unsigned");
+            }
+            (BitWidth::W32, Signedness::Signed) => (f32::MIN as f64, f32::MAX as f64),
+            (BitWidth::W64, Signedness::Signed) => (f64::MIN as f64, f64::MAX as f64),
+        };
+
+        if v >= bounds.0 && v <= bounds.1 {
+            return Ok(());
+        }
+
+        anyhow::bail!("value {v} cannot fit in a primitive of {}", self)
+    }
 }
 
 impl Display for Primitive {
@@ -187,6 +242,7 @@ pub enum TypeKind {
     Sequence(Sequence),
     DynamicArray(DynamicArray),
     FixedArray(FixedArray),
+    Const(Const),
     Primitive(Primitive),
     Void,
 }
@@ -209,6 +265,7 @@ impl Type {
             TypeKind::Sequence(_) => false,
             TypeKind::DynamicArray(_) => false,
             TypeKind::FixedArray(x) => world.lookup(x.value_type).is_pod(world),
+            TypeKind::Const(x) => world.lookup(x.ty).is_pod(world),
             TypeKind::Primitive(_) => true,
             TypeKind::Void => false,
         }
@@ -327,6 +384,7 @@ impl World {
                     TypeKind::FixedArray(fixed_array) => {
                         remap(&mut fixed_array.value_type);
                     }
+                    TypeKind::Const(c) => remap(&mut c.ty),
                     TypeKind::Primitive(_) => {}
                     TypeKind::Void => {}
                 };

@@ -106,7 +106,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     )?;
     copy_file(
         repo_root().join("assets/generated/rust/src/any.rs"),
-        rust_src.join("main.rs"),
+        rust_src.join("any.rs"),
     )?;
     codegen::emit_rust(world, &Default::default(), rust_src.join("example.rs"))?;
 

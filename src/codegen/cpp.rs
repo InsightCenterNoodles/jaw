@@ -17,6 +17,23 @@ pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow:
     {
         let mut ns = out.indent();
 
+        for ty in &world.sorted {
+            let ty = world.lookup(*ty);
+            let TypeKind::Const(c) = &ty.kind else {
+                continue;
+            };
+
+            let target = ctx.cpp_type(c.ty, Namespace::Read)?;
+            let value = match c.value {
+                crate::compile::PrimitiveLiteral::Integer(v) => v.to_string(),
+                crate::compile::PrimitiveLiteral::Real(v) => v.to_string(),
+            };
+            ns.wln(&format!(
+                "constexpr inline {} {} = {};",
+                target, ty.ident, value
+            ));
+        }
+
         ns.wln("template <class T> struct ArrayRef;");
 
         emit_namespace_fwd(&ctx, &mut ns, Namespace::Read)?;
@@ -93,6 +110,7 @@ impl<'a> CppContext<'a> {
         match &ty.kind {
             TypeKind::Primitive(p) => Ok(*p),
             TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
+            TypeKind::Const(c) => self.underlying_primitive(c.ty),
             _ => bail!("expected primitive-compatible type for {}", ty.ident),
         }
     }
@@ -411,7 +429,7 @@ fn emit_type_def_fwd(
                 name, value_ty, arr.count
             ));
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     out.newline();
@@ -541,7 +559,7 @@ fn emit_type_def(
                 name, value_ty, arr.count
             ));
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     out.newline();
@@ -551,7 +569,10 @@ fn emit_type_def(
 
 /// Emits any additional forward declarations needed by a type definition.
 fn emit_forward_decls(out: &mut impl Sink, ty: &Type, ns: Namespace) {
-    if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
+    if matches!(
+        ty.kind,
+        TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Const(_)
+    ) {
         return;
     }
 
@@ -771,7 +792,7 @@ fn emit_read_impl(
                 idt.wln("return true;");
             }
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }
@@ -963,7 +984,7 @@ fn emit_write_impl(
                 idt.wln("return true;");
             }
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }

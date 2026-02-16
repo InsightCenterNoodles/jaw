@@ -5,8 +5,8 @@ use anyhow::Context;
 use crate::intermediate;
 
 use super::{
-    Bitfld, BitfldMember, DynamicArray, FixedArray, Pack, Sequence, StructMember, Type, TypeID,
-    TypeKind, Variant, VariantMember,
+    Bitfld, BitfldMember, Const, DynamicArray, FixedArray, Pack, Sequence, StructMember, Type,
+    TypeID, TypeKind, Variant, VariantMember,
 };
 
 pub(super) struct TypeIDAllocator {
@@ -183,6 +183,19 @@ pub(super) fn convert(
                 )
             })?,
         }),
+        intermediate::TypeKind::Const(c) => {
+            let resolved = state.lookup(&c.ty).with_context(|| {
+                format!(
+                    "while resolving const target type for {} at {}",
+                    ty.ident, ty.defined_at
+                )
+            })?;
+
+            TypeKind::Const(Const {
+                ty: resolved,
+                value: c.value.parse()?,
+            })
+        }
     };
 
     Ok((

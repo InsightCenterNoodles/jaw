@@ -49,6 +49,7 @@ impl<'a> RustContext<'a> {
     pub fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
         match &self.world.lookup(id).kind {
             TypeKind::Primitive(p) => Some(*p),
+            TypeKind::Const(c) => self.direct_primitive(c.ty),
             _ => None,
         }
     }
@@ -59,6 +60,7 @@ impl<'a> RustContext<'a> {
         match &ty.kind {
             TypeKind::Primitive(p) => Some(*p),
             TypeKind::Enum(e) => self.underlying_primitive(e.underlying),
+            TypeKind::Const(c) => self.underlying_primitive(c.ty),
             _ => None,
         }
     }
@@ -68,6 +70,7 @@ impl<'a> RustContext<'a> {
         let ty = self.world.lookup(id);
         match &ty.kind {
             TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Enum(_) => false,
+            TypeKind::Const(c) => self.view_needs_lifetime(c.ty),
             TypeKind::Bitfld(bitfld) => bitfld
                 .members
                 .iter()
@@ -94,6 +97,10 @@ impl<'a> RustContext<'a> {
                     TypeKind::Primitive(_) | TypeKind::Pack(_) => {
                         Some(&self.world.lookup(elem).kind)
                     }
+                    TypeKind::Const(c) => match &self.world.lookup(c.ty).kind {
+                        TypeKind::Primitive(_) => Some(&self.world.lookup(c.ty).kind),
+                        _ => None,
+                    },
                     _ => None,
                 }
             }
@@ -103,6 +110,10 @@ impl<'a> RustContext<'a> {
                     TypeKind::Primitive(_) | TypeKind::Pack(_) => {
                         Some(&self.world.lookup(elem).kind)
                     }
+                    TypeKind::Const(c) => match &self.world.lookup(c.ty).kind {
+                        TypeKind::Primitive(_) => Some(&self.world.lookup(c.ty).kind),
+                        _ => None,
+                    },
                     _ => None,
                 }
             }
@@ -118,7 +129,9 @@ impl<'a> RustContext<'a> {
         let out = match &ty.kind {
             TypeKind::Primitive(_) => name,
             TypeKind::Void => "void".into(),
-            TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) => name,
+            TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Const(_) => {
+                name
+            }
             TypeKind::Sequence(_)
             | TypeKind::Variant(_)
             | TypeKind::DynamicArray(_)
@@ -136,7 +149,9 @@ impl<'a> RustContext<'a> {
         let out = match &ty.kind {
             TypeKind::Primitive(_) => self.name_of(id),
             TypeKind::Void => "()".into(),
-            TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) => self.name_of(id),
+            TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Const(_) => {
+                self.name_of(id)
+            }
             TypeKind::Sequence(_) | TypeKind::Variant(_) => {
                 let name = self.name_of(id);
                 if self.view_needs_lifetime(id) {

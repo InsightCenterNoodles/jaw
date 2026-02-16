@@ -1,5 +1,6 @@
 mod context;
 mod gen_bitfld;
+mod gen_const;
 mod gen_dynarr;
 mod gen_enum;
 mod gen_fixedarr;
@@ -130,6 +131,9 @@ fn emit_for(ctx: &RustContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Re
         }
         TypeKind::FixedArray(arr) => {
             gen_fixedarr::emit_fixedarr(ctx, out, id, ty, arr)?;
+        }
+        TypeKind::Const(c) => {
+            gen_const::emit_const(ctx, out, id, ty, c)?;
         }
         TypeKind::Primitive(_) | TypeKind::Void => {}
     }

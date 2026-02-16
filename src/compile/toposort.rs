@@ -29,6 +29,7 @@ fn layout_dependencies(ty: &Type) -> Vec<TypeID> {
         TypeKind::Sequence(sequence) => sequence.members.iter().map(|m| m.ty).collect(),
         TypeKind::DynamicArray(dynamic_array) => vec![dynamic_array.size_type],
         TypeKind::FixedArray(fixed_array) => vec![fixed_array.value_type],
+        TypeKind::Const(c) => vec![c.ty],
         TypeKind::Primitive(_) | TypeKind::Void => Vec::new(),
     }
 }
