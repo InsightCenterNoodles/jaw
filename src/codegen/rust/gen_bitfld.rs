@@ -199,10 +199,7 @@ fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember, base: &
         let width = end - start + 1;
         let mask = (1u128 << width) - 1;
 
-        if let TypeKind::Enum(_) = &ctx.lookup(m.underlying).kind {
-            //let pname = ctx.name_of(enum_type.underlying);
-            idt.wln(&format!("let v = v as {base};"));
-        }
+        idt.wln(&format!("let v = v as {base};"));
 
         idt.wln(&format!("self.0 |= (v & 0x{mask:X}) << {start};"));
     }

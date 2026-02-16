@@ -451,12 +451,14 @@ impl MyFlags {
         ((self.0 >> 0) & 0x1) as u8
     }
     pub fn set_is_thing(&mut self, v: u8) {
+        let v = v as u8;
         self.0 |= (v & 0x1) << 0;
     }
     pub fn another_thing(&self) -> u8 {
         ((self.0 >> 1) & 0x3) as u8
     }
     pub fn set_another_thing(&mut self, v: u8) {
+        let v = v as u8;
         self.0 |= (v & 0x3) << 1;
     }
     pub fn some_stuff(&self) -> std::io::Result<PlainEnum> {

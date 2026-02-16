@@ -73,7 +73,7 @@ pub fn emit_pack(
             let mut mem_check = vec![];
 
             for item in &pack.members {
-                mem_check.push(format!("self.{0} == other.{0}", item.name));
+                mem_check.push(format!("{{self.{0}}} == {{other.{0}}}", item.name));
             }
 
             idt.wln(&(String::from("return ") + &mem_check.join("&&")));
