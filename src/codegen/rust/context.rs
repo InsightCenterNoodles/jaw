@@ -126,7 +126,7 @@ impl<'a> RustContext<'a> {
         let ty = self.world.lookup(id);
         let name = self.name_of(id);
 
-        let out = match &ty.kind {
+        match &ty.kind {
             TypeKind::Primitive(_) => name,
             TypeKind::Void => "void".into(),
             TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Const(_) => {
@@ -138,9 +138,7 @@ impl<'a> RustContext<'a> {
             | TypeKind::FixedArray(_) => {
                 format!("{name}View")
             }
-        };
-
-        out
+        }
     }
 
     /// Returns the write-module declaration type for `id`, preserving alias names.

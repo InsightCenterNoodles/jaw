@@ -103,7 +103,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
 
-    let lt = ctx.view_needs_lifetime(id).then(|| "'a");
+    let lt = ctx.view_needs_lifetime(id).then_some("'a");
 
     let max_len = max_len_for_size(ctx, arr.size_type)?;
 

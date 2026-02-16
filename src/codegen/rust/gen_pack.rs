@@ -104,7 +104,7 @@ pub fn emit_pack(
     Ok(())
 }
 
-fn reader(out: &mut impl Sink, name: &String) -> Result<()> {
+fn reader(out: &mut impl Sink, name: &str) -> Result<()> {
     emit_jread(name, None, out, |idt| {
         idt.wln("// Safety: Bytes will be overwritten anyway");
         idt.wln("#[allow(invalid_value)]");
@@ -115,8 +115,8 @@ fn reader(out: &mut impl Sink, name: &String) -> Result<()> {
     })
 }
 
-fn writer(out: &mut impl Sink, name: &String) -> Result<()> {
-    emit_jwrite(&name, None, out, |idt| {
+fn writer(out: &mut impl Sink, name: &str) -> Result<()> {
+    emit_jwrite(name, None, out, |idt| {
         idt.wln("writer.write_all(bytemuck::bytes_of(self))");
         Ok(())
     })

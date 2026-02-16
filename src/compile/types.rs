@@ -203,7 +203,7 @@ impl Primitive {
                 bail!("floats are not unsigned");
             }
             (BitWidth::W32, Signedness::Signed) => (f32::MIN as f64, f32::MAX as f64),
-            (BitWidth::W64, Signedness::Signed) => (f64::MIN as f64, f64::MAX as f64),
+            (BitWidth::W64, Signedness::Signed) => (f64::MIN, f64::MAX),
         };
 
         if v >= bounds.0 && v <= bounds.1 {
@@ -399,13 +399,9 @@ impl World {
             definitions: self
                 .definitions
                 .into_iter()
-                .chain(other.definitions.into_iter())
+                .chain(other.definitions)
                 .collect(),
-            sorted: self
-                .sorted
-                .into_iter()
-                .chain(other.sorted.into_iter())
-                .collect(),
+            sorted: self.sorted.into_iter().chain(other.sorted).collect(),
             module_name: self.module_name,
         })
     }

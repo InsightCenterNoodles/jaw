@@ -103,7 +103,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &FixedArray) 
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
 
-    let lt = ctx.view_needs_lifetime(id).then(|| "'a");
+    let lt = ctx.view_needs_lifetime(id).then_some("'a");
 
     emit_jwrite(&plain_type, None, out, |idt| {
         idt.wln(&format!("{view_type}(&self.0).jaw_write(writer)"));
