@@ -45,7 +45,7 @@ impl Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(line) = self.source.0.lines().nth(self.position.line) {
             if let Some((a, b)) = line.split_at_checked(self.position.column) {
-                return write!(f, "line {}: {}↪{}", self.position.line, a, b);
+                return write!(f, "line {}: {}↪{}", self.position.line + 1, a, b);
             }
         }
 
