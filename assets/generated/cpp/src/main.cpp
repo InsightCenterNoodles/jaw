@@ -156,9 +156,9 @@ static void validate(std::span<std::byte> data) {
         DEMAND(root.name == "complex");
         auto ref = std::get<ComplexSeqReader>(root.var);
 
-        DEMAND(ref.flags.is_thing == 1);
-        DEMAND(ref.flags.another_thing == 2);
-        DEMAND(ref.flags.some_stuff == PlainEnumReader::F2);
+        DEMAND(ref.flags.is_thing() == 1);
+        DEMAND(ref.flags.another_thing() == 2);
+        DEMAND(ref.flags.some_stuff() == PlainEnumReader::F2);
 
         // fixed array of POD packs
         DEMAND(ref.list.size() == 8);
@@ -327,11 +327,10 @@ int main(int argc, char** argv) {
         {
             auto name = "complex"_bytes;
 
-            MyFlagsWriter flags {
-                .is_thing = 1,
-                .another_thing = 2,
-                .some_stuff = PlainEnumWriter::F2,
-            };
+            MyFlagsWriter flags {};
+            flags.set_is_thing(1);
+            flags.set_another_thing(2);
+            flags.set_some_stuff(PlainEnumWriter::F2);
 
             std::array<MyPODWriter, 8> fixed_list {
                 MyPODWriter { .a_thing = 0, .b_thing = 0 },

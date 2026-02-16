@@ -29,7 +29,7 @@ pub fn emit_bitfld(
         let mut idt = out.indent();
         for m in &kind.members {
             emit_getter(ctx, &mut idt, m);
-            emit_setter(ctx, &mut idt, m);
+            emit_setter(ctx, &mut idt, m, &base);
         }
     }
     out.newline();
@@ -186,7 +186,7 @@ fn emit_getter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember) {
     }
 }
 
-fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember) {
+fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember, base: &str) {
     let field_ty = ctx.name_of(m.underlying);
 
     out.wln(&format!("pub fn set_{}(&mut self, v: {field_ty})", m.name));
@@ -199,9 +199,9 @@ fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember) {
         let width = end - start + 1;
         let mask = (1u128 << width) - 1;
 
-        if let TypeKind::Enum(enum_type) = &ctx.lookup(m.underlying).kind {
-            let pname = ctx.name_of(enum_type.underlying);
-            idt.wln(&format!("let v = v as {pname};"));
+        if let TypeKind::Enum(_) = &ctx.lookup(m.underlying).kind {
+            //let pname = ctx.name_of(enum_type.underlying);
+            idt.wln(&format!("let v = v as {base};"));
         }
 
         idt.wln(&format!("self.0 |= (v & 0x{mask:X}) << {start};"));

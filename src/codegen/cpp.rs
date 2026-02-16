@@ -4,7 +4,9 @@ use anyhow::{Result, bail};
 
 use std::io::Write;
 
-use crate::compile::{BitWidth, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World};
+use crate::compile::{
+    BitWidth, BitfldMember, Datatype, Primitive, Signedness, Type, TypeID, TypeKind, World,
+};
 
 use super::*;
 
@@ -480,12 +482,18 @@ fn emit_type_def(
             out.wln(";");
         }
         TypeKind::Bitfld(bitfld) => {
+            let under_prim = ctx.underlying_primitive(bitfld.underlying)?;
+            let base = map_primitive(under_prim)?;
             out.wln(&format!("struct {} ", name));
             {
                 let mut idt = out.indent();
+                idt.wln(&format!("{} storage{{}};", base));
+                idt.wln(&format!("{}() = default;", name));
+                idt.wln(&format!("explicit {}({} raw) : storage(raw) {{}}", name, base));
+
                 for m in &bitfld.members {
-                    let mty = ctx.cpp_type(m.underlying, ns)?;
-                    idt.wln(&format!("{} {}{{}};", mty, sanitize(&m.name)));
+                    emit_bitfield_getter(ctx, &mut idt, m, ns)?;
+                    emit_bitfield_setter(ctx, &mut idt, &base, m, ns)?;
                 }
             }
             out.wln(";");
@@ -644,32 +652,14 @@ fn emit_read_impl(
                 }
             }
         }
-        TypeKind::Bitfld(bitfld) => {
-            let under_prim = ctx.underlying_primitive(bitfld.underlying)?;
-            let base = map_primitive(under_prim)?;
+        TypeKind::Bitfld(_bitfld) => {
             out.wln(&format!(
                 "template <class Reader> inline bool read(Reader& reader, {}& value)",
                 name
             ));
             {
                 let mut idt = out.indent();
-                idt.wln(&format!("{} raw{{}};", base));
-                idt.wln("if (!read_scalar(reader, raw)) return false;");
-                idt.wln("auto bits = static_cast<uint64_t>(raw);");
-                for m in &bitfld.members {
-                    let start = m.range.start();
-                    let end = m.range.end();
-                    let width = end - start + 1;
-                    let mask = (1u128 << width) - 1;
-                    let mty = ctx.cpp_type(m.underlying, Namespace::Read)?;
-                    idt.wln(&format!(
-                        "{} = static_cast<{}>((bits >> {}) & 0x{:X}ull);",
-                        assign_target(&m.name),
-                        mty,
-                        start,
-                        mask
-                    ));
-                }
+                idt.wln("if (!read_scalar(reader, value.storage)) return false;");
                 idt.wln("return true;");
             }
         }
@@ -828,30 +818,14 @@ fn emit_write_impl(
                 idt.wln("return write_scalar(writer, raw);");
             }
         }
-        TypeKind::Bitfld(bitfld) => {
-            let under_prim = ctx.underlying_primitive(bitfld.underlying)?;
-            let base = map_primitive(under_prim)?;
+        TypeKind::Bitfld(_bitfld) => {
             out.wln(&format!(
                 "template <class Writer> inline bool write(Writer& writer, {} const& value)",
                 name
             ));
             {
                 let mut idt = out.indent();
-                idt.wln("uint64_t raw = 0;");
-                for m in &bitfld.members {
-                    let start = m.range.start();
-                    let end = m.range.end();
-                    let width = end - start + 1;
-                    let mask = (1u128 << width) - 1;
-                    idt.wln(&format!(
-                        "raw |= (static_cast<uint64_t>({}) & 0x{:X}ull) << {};",
-                        assign_target(&m.name),
-                        mask,
-                        start
-                    ));
-                }
-                idt.wln(&format!("{} out = static_cast<{}>(raw);", base, base));
-                idt.wln("return write_scalar(writer, out);");
+                idt.wln("return write_scalar(writer, value.storage);");
             }
         }
         TypeKind::Variant(variant) => {
@@ -1028,4 +1002,60 @@ fn sanitize<S: AsRef<str>>(s: S) -> String {
 /// Builds an assignment target expression for a field within `value`.
 fn assign_target(name: &str) -> String {
     format!("value.{}", sanitize(name))
+}
+
+/// Emits a bitfield getter that extracts one member from raw storage.
+fn emit_bitfield_getter(
+    ctx: &CppContext,
+    out: &mut impl Sink,
+    m: &BitfldMember,
+    ns: Namespace,
+) -> anyhow::Result<()> {
+    let mty = ctx.cpp_type(m.underlying, ns)?;
+    let getter = sanitize(&m.name);
+    let start = m.range.start();
+    let end = m.range.end();
+    let width = end - start + 1;
+    let mask = (1u128 << width) - 1;
+
+    out.wln(&format!("{} {}() const", mty, getter));
+    {
+        let mut idt = out.indent();
+        idt.wln(&format!(
+            "return static_cast<{}>((static_cast<std::uint64_t>(storage) >> {}) & 0x{:X}ull);",
+            mty, start, mask
+        ));
+    }
+
+    Ok(())
+}
+
+/// Emits a bitfield setter that updates one member in raw storage.
+fn emit_bitfield_setter(
+    ctx: &CppContext,
+    out: &mut impl Sink,
+    base: &str,
+    m: &BitfldMember,
+    ns: Namespace,
+) -> anyhow::Result<()> {
+    let mty = ctx.cpp_type(m.underlying, ns)?;
+    let setter = sanitize(&m.name);
+    let start = m.range.start();
+    let end = m.range.end();
+    let width = end - start + 1;
+    let mask = (1u128 << width) - 1;
+
+    out.wln(&format!("void set_{}({} v)", setter, mty));
+    {
+        let mut idt = out.indent();
+        idt.wln("auto bits = static_cast<std::uint64_t>(storage);");
+        idt.wln(&format!("bits &= ~(0x{:X}ull << {});", mask, start));
+        idt.wln(&format!(
+            "bits |= (static_cast<std::uint64_t>(v) & 0x{:X}ull) << {};",
+            mask, start
+        ));
+        idt.wln(&format!("storage = static_cast<{}>(bits);", base));
+    }
+
+    Ok(())
 }
