@@ -158,11 +158,12 @@ fn encode_expected() -> Vec<u8> {
                 second: example::FixedString([4u8, 5u8, 6u8, 7u8]),
             },
         ];
-        let flags = MyFlags {
+        let flags: MyFlags = MyFlagsUnpack {
             is_thing: 1,
             another_thing: 2,
             some_stuff: PlainEnum::F2,
-        };
+        }
+        .into();
         let seq = ComplexSeq {
             flags,
             list: MyPODFixedList(fixed_list),
@@ -252,11 +253,12 @@ fn make_expected() -> Vec<Root> {
         expected.push(Root {
             name: ShortString(b"complex".into()),
             var: MyVariant::ComplexSeq_5(ComplexSeq {
-                flags: MyFlags {
+                flags: MyFlagsUnpack {
                     is_thing: 1,
                     another_thing: 2,
                     some_stuff: PlainEnum::F2,
-                },
+                }
+                .into(),
                 list: example::MyPODFixedList([
                     MyPOD {
                         a_thing: 0,
@@ -375,15 +377,15 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
             }
             (MyVariant::ComplexSeq_5(es), MyVariant::ComplexSeq_5(as_)) => {
                 demand(
-                    as_.flags.is_thing == es.flags.is_thing,
+                    as_.flags.is_thing() == es.flags.is_thing(),
                     &format!("ComplexSeq.flags.is_thing at {}", i),
                 );
                 demand(
-                    as_.flags.another_thing == es.flags.another_thing,
+                    as_.flags.another_thing() == es.flags.another_thing(),
                     &format!("ComplexSeq.flags.another_thing at {}", i),
                 );
                 demand(
-                    as_.flags.some_stuff == es.flags.some_stuff,
+                    as_.flags.some_stuff().unwrap() == es.flags.some_stuff().unwrap(),
                     &format!("ComplexSeq.flags.some_stuff at {}", i),
                 );
                 for (j, (x, y)) in as_.list.0.iter().zip(es.list.0.iter()).enumerate() {

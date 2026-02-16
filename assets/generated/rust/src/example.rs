@@ -442,41 +442,76 @@ impl JawWrite for BetterEnum {
         Ok(())
     }
 }
-#[derive(Debug, Clone, PartialEq)]
-pub struct MyFlags {
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[repr(transparent)]
+pub struct MyFlags(u8);
+
+impl MyFlags {
+    pub fn is_thing(&self) -> u8 {
+        ((self.0 >> 0) & 0x1) as u8
+    }
+    pub fn set_is_thing(&mut self, v: u8) {
+        self.0 |= (v & 0x1) << 0;
+    }
+    pub fn another_thing(&self) -> u8 {
+        ((self.0 >> 1) & 0x3) as u8
+    }
+    pub fn set_another_thing(&mut self, v: u8) {
+        self.0 |= (v & 0x3) << 1;
+    }
+    pub fn some_stuff(&self) -> std::io::Result<PlainEnum> {
+        let raw = ((self.0 >> 3) & 0x3) as u8;
+
+        let ret = match raw {
+            0 => PlainEnum::F1,
+            1 => PlainEnum::F2,
+            _ => return Err(invalid_data("invalid discriminant in bitfield")),
+        };
+        Ok(ret)
+    }
+    pub fn set_some_stuff(&mut self, v: PlainEnum) {
+        let v = v as u8;
+        self.0 |= (v & 0x3) << 3;
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MyFlagsUnpack {
     pub is_thing: u8,
     pub another_thing: u8,
     pub some_stuff: PlainEnum,
 }
 
+impl From<MyFlagsUnpack> for MyFlags {
+    fn from(value: MyFlagsUnpack) -> Self {
+        let mut ret = Self::default();
+        ret.set_is_thing(value.is_thing);
+        ret.set_another_thing(value.another_thing);
+        ret.set_some_stuff(value.some_stuff);
+        ret
+    }
+}
+impl TryFrom<MyFlags> for MyFlagsUnpack {
+    type Error = std::io::Error;
+    fn try_from(value: MyFlags) -> Result<Self, Self::Error> {
+        Ok(Self {
+            is_thing: value.is_thing(),
+            another_thing: value.another_thing(),
+            some_stuff: value.some_stuff()?,
+        })
+    }
+}
+
 impl JawRead for MyFlags {
     #[inline]
     fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let raw = u8::jaw_read(reader)?;
-        let is_thing = (((raw >> 0) & 0x1) as u8) as u8;
-        let another_thing = (((raw >> 1) & 0x3) as u8) as u8;
-        let some_stuff_raw = ((raw >> 3) & 0x3) as u8;
-        let some_stuff = match some_stuff_raw {
-            0 => PlainEnum::F1,
-            1 => PlainEnum::F2,
-            _ => return Err(invalid_data("invalid discriminant in bitfield")),
-        };
-        Ok(MyFlags {
-            is_thing,
-            another_thing,
-            some_stuff,
-        })
+        Ok(Self(u8::jaw_read(reader)?))
     }
 }
 impl JawWrite for MyFlags {
     #[inline]
     fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut raw: u64 = 0;
-        raw |= ((self.is_thing as u64) & 0x1) << 0;
-        raw |= ((self.another_thing as u64) & 0x3) << 1;
-        raw |= ((self.some_stuff as u64) & 0x3) << 3;
-        let raw = raw as u8;
-        raw.jaw_write(writer)?;
+        self.0.jaw_write(writer)?;
         Ok(())
     }
 }
