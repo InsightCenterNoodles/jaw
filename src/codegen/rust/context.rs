@@ -28,6 +28,10 @@ impl<'a> RustContext<'a> {
         })
     }
 
+    pub fn opts(&self) -> &GlobalOptions {
+        self.options
+    }
+
     pub fn lookup(&self, tname: TypeID) -> &Type {
         self.world.lookup(tname)
     }

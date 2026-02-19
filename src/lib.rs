@@ -11,4 +11,8 @@ pub struct GlobalOptions {
     /// Rust: Use JawRead and JawWrite traits from the given module
     #[arg(long)]
     pub rust_share_traits: Option<String>,
+
+    /// Rust: Replace given dynamic array types with `bytes::Bytes`. These MUST be arrays of u8.
+    #[arg(long)]
+    pub rust_types_as_bytes: Option<Vec<String>>,
 }

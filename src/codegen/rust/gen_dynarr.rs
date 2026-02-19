@@ -15,15 +15,39 @@ pub fn emit_dynarr(
     _ty: &Type,
     arr: &DynamicArray,
 ) -> Result<()> {
-    // bitfields only have one form
     let name = ctx.name_of(id);
 
     let view_type = ctx.rust_view_type(id);
 
+    //dbg!(&name, &ctx.opts().rust_types_as_bytes);
+
+    let use_bytes = ctx
+        .opts()
+        .rust_types_as_bytes
+        .as_ref()
+        .and_then(|x| x.iter().find(|x| x.as_str() == name.as_str()))
+        .is_some();
+
+    if use_bytes {
+        if let Some(p) = ctx.direct_primitive(id) {
+            if !p.is_u8() {
+                return Err(anyhow::anyhow!(
+                    "can only replace dynamic array {} with Bytes if primitive type is u8",
+                    name
+                ));
+            }
+        }
+    }
+
     {
-        let elem = ctx.name_of(arr.value_type);
+        let elem = if use_bytes {
+            "bytes::Bytes".to_string()
+        } else {
+            format!("Vec<{}>", ctx.name_of(arr.value_type))
+        };
+
         out.wln("#[derive(Debug, Clone, PartialEq)]");
-        out.wln(&format!("pub struct {name}(pub Vec<{elem}>);"));
+        out.wln(&format!("pub struct {name}(pub {elem});"));
         out.newline();
     }
 
@@ -39,14 +63,20 @@ pub fn emit_dynarr(
     out.newline();
 
     //
-    reader(ctx, out, id, arr)?;
+    reader(ctx, out, id, arr, use_bytes)?;
 
     writer(ctx, out, id, arr)?;
 
     Ok(())
 }
 
-fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray) -> Result<()> {
+fn reader(
+    ctx: &RustContext,
+    out: &mut impl Sink,
+    id: TypeID,
+    arr: &DynamicArray,
+    use_bytes: bool,
+) -> Result<()> {
     let name = ctx.name_of(id);
 
     let elem_name = ctx.name_of(arr.value_type);
@@ -64,6 +94,10 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
             Some(TypeKind::Primitive(x)) if x.is_u8() => {
                 idt.wln("let mut out = vec![Default::default(); count];");
                 idt.wln("reader.read_exact(&mut out)?;");
+
+                if use_bytes {
+                    idt.wln("let out = bytes::Bytes::from(out);");
+                }
             }
             Some(_) => {
                 idt.wln("let mut out = vec![Default::default(); count];");
