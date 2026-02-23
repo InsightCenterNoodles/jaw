@@ -179,7 +179,7 @@ impl Clone for MyPOD {
 }
 impl PartialEq for MyPOD {
     fn eq(&self, other: &Self) -> bool {
-        return self.a_thing == other.a_thing && self.b_thing == other.b_thing;
+        return { self.a_thing } == { other.a_thing } && { self.b_thing } == { other.b_thing };
     }
 }
 impl Copy for MyPOD {}
@@ -359,7 +359,7 @@ impl Clone for MyOtherPOD {
 }
 impl PartialEq for MyOtherPOD {
     fn eq(&self, other: &Self) -> bool {
-        return self.first == other.first && self.second == other.second;
+        return { self.first } == { other.first } && { self.second } == { other.second };
     }
 }
 impl Copy for MyOtherPOD {}
@@ -677,6 +677,17 @@ impl<'a> JawWrite for ComplexSeqView<'a> {
         Ok(())
     }
 }
+#[repr(u8)]
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MyVariantDiscriminant {
+    MyPOD_1 = 1,
+    MyOtherPOD_2 = 2,
+    void_3 = 3,
+    SmallSeq_4 = 4,
+    ComplexSeq_5 = 5,
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MyVariant {
@@ -697,6 +708,22 @@ pub enum MyVariantView<'a> {
     ComplexSeqView_5(&'a ComplexSeqView<'a>),
 }
 
+impl JawRead for MyVariantDiscriminant {
+    #[inline]
+    fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let tag = u8::jaw_read(reader)?;
+        match tag {
+            1 => Ok(MyVariantDiscriminant::MyPOD_1),
+            2 => Ok(MyVariantDiscriminant::MyOtherPOD_2),
+            3 => Ok(MyVariantDiscriminant::void_3),
+            4 => Ok(MyVariantDiscriminant::SmallSeq_4),
+            5 => Ok(MyVariantDiscriminant::ComplexSeq_5),
+            _ => Err(invalid_data(format!(
+                "unknown tag for MyVariantDiscriminant: {tag}"
+            ))),
+        }
+    }
+}
 impl JawRead for MyVariant {
     #[inline]
     fn jaw_read<R: Read>(reader: &mut R) -> io::Result<Self> {
@@ -720,6 +747,33 @@ impl JawRead for MyVariant {
                 Ok(MyVariant::ComplexSeq_5(payload))
             }
             _ => Err(invalid_data(format!("unknown tag for MyVariant: {tag}"))),
+        }
+    }
+}
+impl JawWrite for MyVariantDiscriminant {
+    #[inline]
+    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        match self {
+            MyVariantDiscriminant::MyPOD_1 => {
+                (1u8).jaw_write(writer)?;
+                Ok(())
+            }
+            MyVariantDiscriminant::MyOtherPOD_2 => {
+                (2u8).jaw_write(writer)?;
+                Ok(())
+            }
+            MyVariantDiscriminant::void_3 => {
+                (3u8).jaw_write(writer)?;
+                Ok(())
+            }
+            MyVariantDiscriminant::SmallSeq_4 => {
+                (4u8).jaw_write(writer)?;
+                Ok(())
+            }
+            MyVariantDiscriminant::ComplexSeq_5 => {
+                (5u8).jaw_write(writer)?;
+                Ok(())
+            }
         }
     }
 }

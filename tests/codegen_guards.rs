@@ -85,6 +85,14 @@ variant V : u8
         rust_src.contains("Foo_2"),
         "rust output missing second case name"
     );
+    assert!(
+        rust_src.contains("pub enum VDiscriminant"),
+        "rust output missing variant discriminant enum"
+    );
+    assert!(
+        rust_src.contains("Foo_1 = 1"),
+        "rust output missing discriminant enum value mapping"
+    );
     let _ = fs::remove_file(&rust_out);
 
     // Python

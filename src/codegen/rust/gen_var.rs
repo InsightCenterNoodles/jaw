@@ -17,6 +17,23 @@ pub fn emit_var(
 ) -> Result<()> {
     // bitfields only have one form
     let name = ctx.name_of(id);
+    let disc_name = variant_discriminant_name(ctx, id);
+    let disc_type = ctx.name_of(variant.discriminant);
+
+    {
+        out.wln(&format!("#[repr({disc_type})]"));
+        out.wln("#[allow(non_camel_case_types)]");
+        out.wln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
+        out.wln(&format!("pub enum {disc_name}"));
+        {
+            let mut idt = out.indent();
+            for m in &variant.members {
+                let case_name = variant_case_name(ctx, m)?;
+                idt.wln(&format!("{case_name} = {},", m.value));
+            }
+        }
+        out.newline();
+    }
 
     let view_type = ctx.rust_view_type(id);
 
@@ -84,6 +101,11 @@ pub fn emit_var(
     Ok(())
 }
 
+fn variant_discriminant_name(ctx: &RustContext<'_>, id: TypeID) -> String {
+    let name = ctx.name_of(id);
+    format!("{name}Discriminant")
+}
+
 // Keep variant arm names stable and unique even when payload types repeat.
 /// Computes a stable, unique variant case name.
 fn variant_case_name(ctx: &RustContext, m: &VariantMember) -> Result<String> {
@@ -100,6 +122,32 @@ fn variant_case_viewname(ctx: &RustContext, m: &VariantMember) -> Result<String>
 
 fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant) -> Result<()> {
     let name = ctx.name_of(id);
+    let disc_name = variant_discriminant_name(ctx, id);
+
+    emit_jread(&disc_name, None, out, |idt| {
+        idt.wln(&format!(
+            "let tag = {};",
+            read_expr(ctx, variant.discriminant)
+        ));
+        idt.wln("match tag");
+        {
+            let mut mtch = idt.indent();
+            for m in &variant.members {
+                let case_name = variant_case_name(ctx, m)?;
+                mtch.wln(&format!("{} => ", m.value));
+                {
+                    let mut body = mtch.indent();
+
+                    body.wln(&format!("Ok({disc_name}::{case_name})"));
+                }
+                mtch.wln(",");
+            }
+            mtch.wln(&format!(
+                "_ => Err(invalid_data(format!(\"unknown tag for {disc_name}: {{tag}}\"))),"
+            ));
+        }
+        Ok(())
+    })?;
 
     emit_jread(&name, None, out, |idt| {
         idt.wln(&format!(
@@ -141,6 +189,29 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
 fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant) -> Result<()> {
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
+    let disc_name = variant_discriminant_name(ctx, id);
+
+    emit_jwrite(&disc_name, None, out, |idt| {
+        //let write_tag = write_primitive_method(ctx, variant.discriminant)?;
+        let disc_type = ctx.name_of(variant.discriminant);
+        idt.wln("match self");
+        {
+            let mut mtch = idt.indent();
+            for m in &variant.members {
+                let case_name = variant_case_name(ctx, m)?;
+
+                mtch.wln(&format!("{disc_name}::{case_name} =>"));
+                {
+                    let mut body = mtch.indent();
+                    let expr = write_expr(&format!("({}{})", m.value, disc_type));
+                    body.wln(&format!("{expr};"));
+                    body.wln("Ok(())");
+                }
+                mtch.wln(",");
+            }
+        }
+        Ok(())
+    })?;
 
     emit_jwrite(&plain_type, None, out, |idt| {
         //let write_tag = write_primitive_method(ctx, variant.discriminant)?;
