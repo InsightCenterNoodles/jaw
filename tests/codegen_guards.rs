@@ -43,6 +43,10 @@ dyn_array Arr : u8 * u8
         rust_src.contains("max_len"),
         "rust output missing max_len guard"
     );
+    assert!(
+        rust_src.contains("pub unsafe fn write_start<W: Write>("),
+        "rust output missing dynamic-array write_start helper"
+    );
     let _ = fs::remove_file(&rust_out);
 
     // Python

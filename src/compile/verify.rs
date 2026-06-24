@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use itertools::Itertools;
 use thiserror::Error;
 
@@ -128,11 +128,11 @@ fn verify_structmem(world: &World, ty: &Type, value: &StructMember) -> anyhow::R
 }
 
 /// Verifies that all strings in an iterator are unique.
-fn verify_unique<'a>(mut iter: impl Iterator<Item = &'a String>) -> anyhow::Result<()> {
-    if !iter.all_unique() {
-        let s = iter.duplicates().join(",");
+fn verify_unique<'a>(iter: impl Iterator<Item = &'a String>) -> anyhow::Result<()> {
+    let duplicates = iter.duplicates().join(",");
 
-        bail!("all names must be unique: {s}");
+    if !duplicates.is_empty() {
+        bail!("all names must be unique: {duplicates}");
     }
 
     Ok(())

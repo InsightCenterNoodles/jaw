@@ -546,7 +546,8 @@ impl Reader {
         let Some((_, Ok(line))) = self.source.peek() else {
             return None;
         };
-        if line.starts_with('-') || line.starts_with('>') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('-') || trimmed.starts_with('>') {
             self.next_line()
         } else {
             None

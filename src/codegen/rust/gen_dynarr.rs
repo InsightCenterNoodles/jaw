@@ -136,10 +136,26 @@ fn max_len_for_size(ctx: &RustContext, id: TypeID) -> Result<u128> {
 fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray) -> Result<()> {
     let plain_type = ctx.name_of(id);
     let view_type = ctx.rust_view_type(id);
+    let size_type = ctx.name_of(arr.size_type);
 
     let lt = ctx.view_needs_lifetime(id).then_some("'a");
 
     let max_len = max_len_for_size(ctx, arr.size_type)?;
+
+    out.wln(&format!("impl {plain_type}"));
+    {
+        let mut idt = out.indent();
+        idt.wln("#[inline]");
+        idt.wln(&format!(
+            "pub unsafe fn write_start<W: Write>(value: {size_type}, writer: &mut W) -> io::Result<()>"
+        ));
+        {
+            let mut body = idt.indent();
+            body.wln(&format!("{};", write_expr("value")));
+            body.wln("Ok(())");
+        }
+    }
+    out.newline();
 
     emit_jwrite(&plain_type, None, out, |idt| {
         //let write_tag = write_primitive_method(ctx, variant.discriminant)?;

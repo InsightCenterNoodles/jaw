@@ -29,6 +29,29 @@ fn variant_sig(members: &[VariantMember]) -> Vec<(u64, &str)> {
     members.iter().map(|m| (m.value, m.ty.as_str())).collect()
 }
 
+fn parse_err(source: &str) -> IntermediateError {
+    Module::from_string("file".into(), source.into()).expect_err("parse should fail")
+}
+
+fn assert_missing_detail(source: &str, kind: &str) {
+    let err = parse_err(source);
+    let IntermediateError::MissingDeclarationDetail { kind: actual, .. } = err else {
+        panic!("unexpected error kind: {err:?}");
+    };
+    assert_eq!(actual, kind);
+}
+
+fn assert_malformed_member(source: &str, expected: &str) {
+    let err = parse_err(source);
+    let IntermediateError::MalformedMember { reason, .. } = err else {
+        panic!("unexpected error kind: {err:?}");
+    };
+    assert!(
+        reason.contains(expected),
+        "expected `{expected}` in error reason `{reason}`"
+    );
+}
+
 /// Test: the example DSL file parses into the expected intermediate AST.
 #[test]
 fn intermediate() {
@@ -285,8 +308,195 @@ const Byte : u8 = 1
         TypeKind::Const(c) => {
             assert_eq!(module.definitions[0].ident.as_str(), "Byte");
             assert_eq!(c.ty.as_str(), "u8");
+            assert_eq!(c.value, "1");
         }
         other => panic!("Byte parsed as unexpected kind: {:?}", other),
+    }
+}
+
+/// Test: comments, blank lines, and extra whitespace are ignored by the parser.
+#[test]
+fn comments_and_whitespace_are_ignored() {
+    let source = r#"
+# file header
+
+  pack   Local    # inline declaration comment
+  -   a   :   u8  # inline member comment
+
+seq Root
+- value : Local
+"#;
+
+    let module = Module::from_string("file".into(), source.into()).expect("parse module");
+    assert_eq!(module.definitions.len(), 2);
+
+    match &module.definitions[0].kind {
+        TypeKind::Pack(pack) => assert_eq!(struct_sig(&pack.members), vec![("a", "u8")]),
+        other => panic!("Local parsed as unexpected kind: {:?}", other),
+    }
+    match &module.definitions[1].kind {
+        TypeKind::Sequence(seq) => assert_eq!(struct_sig(&seq.members), vec![("value", "Local")]),
+        other => panic!("Root parsed as unexpected kind: {:?}", other),
+    }
+}
+
+/// Test: enum declarations can carry exactly one default member.
+#[test]
+fn enum_default_is_parsed() {
+    let source = r#"
+enum Mode : u8
+> Unknown = 255
+- Ready = 1
+"#;
+
+    let module = Module::from_string("file".into(), source.into()).expect("parse module");
+    match &module.definitions[0].kind {
+        TypeKind::Enum(enm) => {
+            assert_eq!(
+                enm.default.as_ref().map(|d| (d.name.as_str(), d.value)),
+                Some(("Unknown", 255))
+            );
+            assert_eq!(enum_sig(&enm.members), vec![("Ready", 1)]);
+        }
+        other => panic!("Mode parsed as unexpected kind: {:?}", other),
+    }
+}
+
+/// Test: declarations that require a `: ...` detail reject missing detail.
+#[test]
+fn declaration_details_are_required() {
+    for (source, kind) in [
+        ("enum Missing\n- A = 1\n", "enum"),
+        ("bits Missing\n- 0 a : u8\n", "bits"),
+        ("variant Missing\n- 0 => void\n", "variant"),
+        ("fixed_array Missing\n", "fixed_array"),
+        ("dyn_array Missing\n", "dyn_array"),
+        ("const Missing\n", "const"),
+        ("const Missing : u8\n", "missing value"),
+    ] {
+        assert_missing_detail(source, kind);
+    }
+}
+
+/// Test: all array declarations require a count/size and element type separated by `*`.
+#[test]
+fn malformed_array_specs_are_rejected() {
+    for source in ["fixed_array Bad : 4 u8\n", "dyn_array Bad : u8 u8\n"] {
+        let err = parse_err(source);
+        let IntermediateError::InvalidArraySpec { .. } = err else {
+            panic!("unexpected error kind: {err:?}");
+        };
+    }
+}
+
+/// Test: unsupported top-level declaration keywords are rejected.
+#[test]
+fn unsupported_declarations_are_rejected() {
+    let err = parse_err("struct Bad\n- a : u8\n");
+    let IntermediateError::UnsupportedDeclaration { decl_type, .. } = err else {
+        panic!("unexpected error kind: {err:?}");
+    };
+    assert_eq!(decl_type, "struct");
+}
+
+/// Test: malformed member lines report the specific token-level failure.
+#[test]
+fn malformed_members_are_rejected() {
+    assert_malformed_member("pack Bad\n- a u8\n", "expected `:`");
+    assert_malformed_member("pack Bad\n- a : u8 extra\n", "unexpected extra token");
+    assert_malformed_member("enum Bad : u8\n- A : 1\n", "expected `=`");
+    assert_malformed_member("bits Bad : u8\n- 0 flag u8\n", "expected `:`");
+    assert_malformed_member("variant Bad : u8\n- 0 -> void\n", "expected `=>`");
+}
+
+/// Test: integer-valued members reject non-integer text.
+#[test]
+fn member_numbers_must_parse() {
+    for source in [
+        "enum Bad : u8\n- A = nope\n",
+        "variant Bad : u8\n- nope => void\n",
+        "fixed_array Bad : nope * u8\n",
+    ] {
+        let err = parse_err(source);
+        let IntermediateError::InvalidNumber { .. } = err else {
+            panic!("unexpected error kind: {err:?}");
+        };
+    }
+}
+
+/// Test: only enums support default members, and only one default is allowed.
+#[test]
+fn default_member_rules_are_enforced() {
+    assert_malformed_member(
+        "pack Bad\n> a : u8\n",
+        "pack declarations do not support default members",
+    );
+    assert_malformed_member(
+        "seq Bad\n> a : u8\n",
+        "sequence declarations do not support default members",
+    );
+    assert_malformed_member(
+        "bits Bad : u8\n> 0 a : u8\n",
+        "bitfield declarations do not support default members",
+    );
+
+    let err = parse_err(
+        r#"
+enum Bad : u8
+> A = 0
+> B = 1
+"#,
+    );
+    let IntermediateError::DuplicateDefault { .. } = err else {
+        panic!("unexpected error kind: {err:?}");
+    };
+}
+
+/// Test: type names may contain only alphanumeric characters and underscores.
+#[test]
+fn illegal_type_name_characters_are_rejected() {
+    for source in [
+        "pack Bad-Type\n- a : u8\n",
+        "pack Bad\n- a : bad-type\n",
+        "dyn_array Bad : u8 * bad-type\n",
+        "from \"other.jaw\" use {Bad-Type}\npack Local\n- a : u8\n",
+    ] {
+        let err = parse_err(source);
+        let IntermediateError::IllegalChar { reason: '-', .. } = err else {
+            panic!("unexpected error kind: {err:?}");
+        };
+    }
+}
+
+/// Test: import declarations validate their full shape.
+#[test]
+fn malformed_imports_are_rejected() {
+    for (source, expected) in [
+        (
+            "from other.jaw use {Thing}\npack Local\n- a : u8\n",
+            "double-quotation",
+        ),
+        (
+            "from \"other.jaw\" {Thing}\npack Local\n- a : u8\n",
+            "expected `use`",
+        ),
+        (
+            "from \"other.jaw\" use Thing\npack Local\n- a : u8\n",
+            "expected `{...}`",
+        ),
+        (
+            "from \"other.jaw\" use {}\npack Local\n- a : u8\n",
+            "may not be empty",
+        ),
+    ] {
+        let err = parse_err(source);
+        let IntermediateError::InvalidImport { reason, .. } = err else {
+            panic!("unexpected error kind: {err:?}");
+        };
+        assert!(
+            reason.contains(expected),
+            "expected `{expected}` in error reason `{reason}`"
+        );
     }
 }
 

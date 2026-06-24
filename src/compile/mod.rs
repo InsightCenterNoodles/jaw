@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::intermediate::{Module, Position, SourceCode, SourceLocation, TypeName};
 
-use convert::{CompileState, TypeIDAllocator, convert};
+use convert::{convert, CompileState, TypeIDAllocator};
 use toposort::toposort;
 use verify::verify;
 
@@ -25,7 +25,7 @@ use verify::verify;
 pub fn compile(module: Module) -> anyhow::Result<World> {
     let mut allocator = TypeIDAllocator::new();
 
-    let (mut name_to_id, mut defs) = {
+    let (mut name_to_id, mut name_to_location, mut defs) = {
         let names = [
             Primitive {
                 width: BitWidth::W8,
@@ -105,40 +105,47 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
         let mut name_to_id: HashMap<_, _> =
             names.iter().map(|x| (x.2.ident.clone(), x.1)).collect();
 
+        let mut name_to_location: HashMap<_, _> = names
+            .iter()
+            .map(|x| (x.2.ident.clone(), x.2.defined_at.clone()))
+            .collect();
+
         let mut defs: HashMap<_, _> = names.into_iter().map(|x| (x.1, x.2)).collect();
 
         let void_name = TypeName::from_string(builtin_defined_at, "void").unwrap();
         let void_tid = allocator.next();
+        let void_defined_at = SourceLocation::new(
+            SourceCode(std::sync::Arc::new("builtin".into())),
+            Position { line: 0, column: 0 },
+        );
 
         name_to_id.insert(void_name.clone(), void_tid);
+        name_to_location.insert(void_name.clone(), void_defined_at.clone());
         defs.insert(
             void_tid,
             Type {
                 ident: void_name,
-                defined_at: SourceLocation::new(
-                    SourceCode(std::sync::Arc::new("builtin".into())),
-                    Position { line: 0, column: 0 },
-                ),
+                defined_at: void_defined_at,
                 kind: TypeKind::Void,
             },
         );
 
-        (name_to_id, defs)
+        (name_to_id, name_to_location, defs)
     };
 
     for def in module.definitions.iter() {
-        if let Some(existing) = name_to_id.get(&def.ident) {
-            let prev = defs.get(existing).expect("type id without definition");
+        if let Some(prev) = name_to_location.get(&def.ident) {
             bail!(
                 "duplicate type name {} defined at {} (previously defined at {})",
                 def.ident,
                 def.defined_at,
-                prev.defined_at
+                prev
             );
         }
 
         let ident = allocator.next();
         name_to_id.insert(def.ident.clone(), ident);
+        name_to_location.insert(def.ident.clone(), def.defined_at.clone());
     }
 
     let cs = CompileState { name_to_id };
