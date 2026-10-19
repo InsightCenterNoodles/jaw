@@ -1,15 +1,18 @@
 #pragma once
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
-#include <bit>
 #include <optional>
 #include <span>
 #include <type_traits>
-#include <variant>
 #include <utility>
+#include <variant>
+#include <vector>
 static_assert(CHAR_BIT == 8, "jaw requires 8-bit bytes");
 static_assert(std::endian::native == std::endian::little, "jaw only supports little-endian targets");
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559, "jaw requires IEEE-754 binary32 float");

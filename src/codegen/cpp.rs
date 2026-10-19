@@ -185,17 +185,20 @@ impl<'a> CppContext<'a> {
 /// Emits header includes and opens the top-level namespace.
 fn emit_preamble(out: &mut Outfile, namespace: &str) -> Result<()> {
     *out += "#pragma once";
+    out.wln("#include <algorithm>");
     out.wln("#include <array>");
+    out.wln("#include <bit>");
     out.wln("#include <climits>");
     out.wln("#include <cstddef>");
     out.wln("#include <cstdint>");
+    out.wln("#include <cstring>");
     out.wln("#include <limits>");
-    out.wln("#include <bit>");
     out.wln("#include <optional>");
     out.wln("#include <span>");
     out.wln("#include <type_traits>");
-    out.wln("#include <variant>");
     out.wln("#include <utility>");
+    out.wln("#include <variant>");
+    out.wln("#include <vector>");
     out.wln("static_assert(CHAR_BIT == 8, \"jaw requires 8-bit bytes\");");
     out.wln("static_assert(std::endian::native == std::endian::little, \"jaw only supports little-endian targets\");");
     out.wln("static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559, \"jaw requires IEEE-754 binary32 float\");");

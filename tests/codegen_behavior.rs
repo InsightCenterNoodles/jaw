@@ -153,6 +153,28 @@ dyn_array MyPODDynList : u16 * MyPOD
 }
 
 #[test]
+fn cpp_header_includes_helper_dependencies() {
+    let world = world_from(
+        r#"
+dyn_array Bytes : u32 * u8
+"#,
+    );
+
+    let cpp_out = temp_path("cpp_helper_dependencies", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+
+    for header in ["algorithm", "cstring", "vector"] {
+        assert!(
+            cpp_src.contains(&format!("#include <{header}>")),
+            "cpp output should directly include <{header}>"
+        );
+    }
+
+    let _ = fs::remove_file(&cpp_out);
+}
+
+#[test]
 fn cpp_variant_reads_move_payloads() {
     let world = world_from(
         r#"
