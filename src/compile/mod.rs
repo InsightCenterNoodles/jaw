@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::intermediate::{Module, Position, SourceCode, SourceLocation, TypeName};
 
-use convert::{convert, CompileState, TypeIDAllocator};
+use convert::{CompileState, TypeIDAllocator, convert};
 use toposort::toposort;
 use verify::verify;
 

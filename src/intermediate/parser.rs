@@ -3,7 +3,8 @@ use std::{io::BufRead, iter::Peekable};
 use super::{
     ast::{
         Bitfld, BitfldMember, Const, DynamicArray, Enum, EnumMember, FixedArray, Import, Module,
-        Pack, Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
+        Pack, ReservedRange, Sequence, StructMember, Type, TypeKind, TypeName, Variant,
+        VariantMember,
     },
     error::IntermediateError,
     source::{Position, SourceCode, SourceLocation},
@@ -517,11 +518,7 @@ impl Reader {
         let mut ret = vec![];
         let mut def = None;
 
-        loop {
-            let Some(l) = self.has_member_start() else {
-                break;
-            };
-
+        while let Some(l) = self.has_member_start() {
             let item = f(self.code.clone(), l)?;
             let (member_type, parsed) = item;
 
@@ -604,12 +601,12 @@ impl Reader {
             })?,
         )?;
 
-        let (members, default) = self.member_iter(EnumMember::parse)?;
+        let (members, reserved) = self.enum_members()?;
 
         Ok(TypeKind::Enum(Enum {
             ty,
             members,
-            default,
+            reserved,
         }))
     }
 
@@ -653,16 +650,55 @@ impl Reader {
             })?,
         )?;
 
-        let (members, default) = self.member_iter(VariantMember::parse)?;
+        let (members, reserved) = self.variant_members()?;
 
-        if let Some(member) = default {
-            return Err(IntermediateError::MalformedMember {
-                position: member.defined_at().clone(),
-                reason: "variant declarations do not support default members".into(),
-            });
+        Ok(TypeKind::Variant(Variant {
+            ty,
+            members,
+            reserved,
+        }))
+    }
+
+    fn enum_members(&mut self) -> Result<(Vec<EnumMember>, Vec<ReservedRange>), IntermediateError> {
+        let mut members = Vec::new();
+        let mut reserved = Vec::new();
+        while let Some(line) = self.has_member_start() {
+            if is_reservation(&line.1) {
+                reserved.push(parse_reservation(self.code.clone(), line)?);
+                continue;
+            }
+            let (kind, member) = EnumMember::parse(self.code.clone(), line)?;
+            if matches!(kind, MemberType::Default) {
+                return Err(IntermediateError::MalformedMember {
+                    position: member.defined_at,
+                    reason: "enum default members are no longer supported".into(),
+                });
+            }
+            members.push(member);
         }
+        Ok((members, reserved))
+    }
 
-        Ok(TypeKind::Variant(Variant { ty, members }))
+    fn variant_members(
+        &mut self,
+    ) -> Result<(Vec<VariantMember>, Vec<ReservedRange>), IntermediateError> {
+        let mut members = Vec::new();
+        let mut reserved = Vec::new();
+        while let Some(line) = self.has_member_start() {
+            if is_reservation(&line.1) {
+                reserved.push(parse_reservation(self.code.clone(), line)?);
+                continue;
+            }
+            let (kind, member) = VariantMember::parse(self.code.clone(), line)?;
+            if matches!(kind, MemberType::Default) {
+                return Err(IntermediateError::MalformedMember {
+                    position: member.defined_at,
+                    reason: "variant default members are not supported".into(),
+                });
+            }
+            members.push(member);
+        }
+        Ok((members, reserved))
     }
 
     /// Parses a `fixed_array` declaration body.
@@ -754,6 +790,61 @@ impl Reader {
 enum MemberType {
     Normal,
     Default,
+}
+
+fn is_reservation(line: &str) -> bool {
+    matches!(
+        line.split_whitespace().collect::<Vec<_>>().as_slice(),
+        ["-", "reserve", ..]
+    )
+}
+
+fn parse_reservation(
+    source: SourceCode,
+    input: (usize, String),
+) -> Result<ReservedRange, IntermediateError> {
+    let mut iter = make_mem_split(&input);
+    let fallback = Position {
+        line: input.0,
+        column: 0,
+    };
+    let kind = consume_member_start(source.clone(), &mut iter, fallback)?;
+    if matches!(kind, MemberType::Default) {
+        return Err(IntermediateError::MalformedMember {
+            position: source.position(fallback),
+            reason: "reservations must use `-`".into(),
+        });
+    }
+    demand_string(source.clone(), &mut iter, "reserve", fallback)?;
+    let (position, raw) = iter
+        .next()
+        .ok_or_else(|| IntermediateError::MalformedMember {
+            position: source.position(fallback),
+            reason: "missing reserved value or range".into(),
+        })?;
+    demand_done(source.clone(), iter)?;
+
+    let parse_value = |value: &str| {
+        value
+            .parse::<u64>()
+            .map_err(|source_error| IntermediateError::InvalidNumber {
+                position: source.position(position),
+                value: value.to_string(),
+                source: source_error,
+            })
+    };
+    let (start, end) = if let Some((start, end)) = raw.split_once("..=") {
+        (parse_value(start)?, parse_value(end)?)
+    } else {
+        let value = parse_value(raw)?;
+        (value, value)
+    };
+
+    Ok(ReservedRange {
+        start,
+        end,
+        defined_at: source.position(position),
+    })
 }
 
 /// Returns the raw pointer address of a string slice (used for offset computation).

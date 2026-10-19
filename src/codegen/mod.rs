@@ -31,6 +31,10 @@ impl Write for OutfileInner {
 impl OutfileInner {
     /// Writes a single line with current indentation applied.
     fn wln(&mut self, s: &str) {
+        if s.is_empty() {
+            writeln!(self).unwrap();
+            return;
+        }
         for _ in 0..self.indent {
             write!(self, "    ").unwrap();
         }

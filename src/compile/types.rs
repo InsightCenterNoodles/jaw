@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display, ops::RangeInclusive, str::FromStr}
 use anyhow::{Error, bail};
 use itertools::Itertools;
 
-use crate::intermediate::{EnumMember, SourceLocation, TypeName};
+use crate::intermediate::{EnumMember, ReservedRange, SourceLocation, TypeName};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructMember {
@@ -23,7 +23,7 @@ pub struct Pack {
 pub struct Enum {
     pub underlying: TypeID,
     pub members: Vec<EnumMember>,
-    pub default: Option<EnumMember>,
+    pub reserved: Vec<ReservedRange>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +53,7 @@ pub struct VariantMember {
 pub struct Variant {
     pub discriminant: TypeID,
     pub members: Vec<VariantMember>,
+    pub reserved: Vec<ReservedRange>,
 }
 
 /// Sequence of named fields (a typical record/struct).
@@ -339,7 +340,13 @@ impl World {
             bail!("unable to remap type id while merging modules");
         };
 
-        let new_base = max_tid.0;
+        // `other` starts allocating at TypeID(0), so its IDs must begin after
+        // the largest ID already present in `self`. Using `max_tid` directly
+        // makes the remapped TypeID(0) overwrite that existing definition.
+        let new_base = max_tid
+            .0
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("unable to remap type id while merging modules"))?;
 
         let remap = |id: &mut TypeID| id.0 += new_base;
 

@@ -37,17 +37,16 @@ pack MyOtherPOD
 - first : MyPOD
 - second : FixedString
 
-# Enums are like C++ scoped enums. They must use an unsigned integer base type. Unknown discriminants are errors
-# unless a default is defined.
+# Enums use an unsigned integer-backed wire representation. Convert to the generated value enum on demand;
+# conversion fails for unknown and reserved values.
 enum PlainEnum : u8
 - F1 = 0
 - F2 = 1
 
-# Enums can also define a default value to substitute when an unknown discriminant is read.
 enum BetterEnum : u8
 - A = 0
 - B = 1
-> DEFAULT = 255
+- reserve 2..=255
 
 # Bitfields/flags: the underlying type must be an integer or enum, and bit positions are numbered from LSB=0.
 # On write, fields are masked/truncated to their declared width; on read, fields are zero-extended from that width.

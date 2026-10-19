@@ -1,12 +1,19 @@
 #pragma once
 #include <array>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <bit>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <variant>
 #include <utility>
+static_assert(CHAR_BIT == 8, "jaw requires 8-bit bytes");
+static_assert(std::endian::native == std::endian::little, "jaw only supports little-endian targets");
+static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559, "jaw requires IEEE-754 binary32 float");
+static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559, "jaw requires IEEE-754 binary64 double");
 
 // Reader concept: bool read_bytes(std::byte*, size_t);
 // Reader concept: std::span<std::byte> advance_bytes(size_t);
@@ -16,35 +23,35 @@ namespace example {
     template <class T> struct ArrayRef;
     namespace readers 
     {
-        
+
         struct MyPODReader;
-        
+
         struct MyOtherPODReader;
-        
-        enum class PlainEnumReader : std::uint8_t;
-        
-        enum class BetterEnumReader : std::uint8_t;
-        
+
+        struct PlainEnumReader;
+
+        struct BetterEnumReader;
+
         struct MyFlagsReader;
-        
+
         struct SmallSeqReader;
-        
+
         struct ComplexSeqReader;
-        
+
         struct MyVariantReader;
-        
+
         struct RootReader;
-        
+
         using FixedStringReader = std::array<std::uint8_t, 4>;
-        
+
         using ShortStringReader = ArrayRef<std::uint8_t>;
-        
+
         using DataReader = ArrayRef<float>;
-        
+
         using MyPODFixedListReader = std::array<MyPODReader, 8>;
-        
+
         using MyOtherPODDynListReader = ArrayRef<MyOtherPODReader>;
-        
+
         template <class Reader> bool read(Reader&, MyPODReader&);
         template <class Reader> bool read(Reader&, FixedStringReader&);
         template <class Reader> bool read(Reader&, ShortStringReader&);
@@ -60,38 +67,38 @@ namespace example {
         template <class Reader> bool read(Reader&, MyVariantReader&);
         template <class Reader> bool read(Reader&, RootReader&);
     }
-    
+
     namespace writers 
     {
-        
+
         struct MyPODWriter;
-        
+
         struct MyOtherPODWriter;
-        
-        enum class PlainEnumWriter : std::uint8_t;
-        
-        enum class BetterEnumWriter : std::uint8_t;
-        
+
+        struct PlainEnumWriter;
+
+        struct BetterEnumWriter;
+
         struct MyFlagsWriter;
-        
+
         struct SmallSeqWriter;
-        
+
         struct ComplexSeqWriter;
-        
+
         struct MyVariantWriter;
-        
+
         struct RootWriter;
-        
+
         using FixedStringWriter = std::array<std::uint8_t, 4>;
-        
+
         using ShortStringWriter = std::span<std::uint8_t>;
-        
+
         using DataWriter = std::span<float>;
-        
+
         using MyPODFixedListWriter = std::array<MyPODWriter, 8>;
-        
+
         using MyOtherPODDynListWriter = std::span<MyOtherPODWriter>;
-        
+
         template <class Writer> bool write(Writer&, MyPODWriter const&);
         template <class Writer> bool write(Writer&, FixedStringWriter const&);
         template <class Writer> bool write(Writer&, ShortStringWriter const&);
@@ -107,33 +114,33 @@ namespace example {
         template <class Writer> bool write(Writer&, MyVariantWriter const&);
         template <class Writer> bool write(Writer&, RootWriter const&);
     }
-    
+
     template <class Reader>
     inline bool read_bytes(Reader& reader, void* dst, size_t n)
     {
         return reader.read_bytes(reinterpret_cast<std::byte*>(dst), n);
     }
-    
+
     template <class Writer>
     inline bool write_bytes(Writer& writer, void const* src, size_t n)
     {
         return writer.write_bytes(reinterpret_cast<std::byte const*>(src), n);
     }
-    
+
     template <class Reader, class T>
     inline bool read_scalar(Reader& reader, T& value)
     {
         static_assert(std::is_trivially_copyable_v<T>);
         return read_bytes(reader, &value, sizeof(T));
     }
-    
+
     template <class Writer, class T>
     inline bool write_scalar(Writer& writer, T const& value)
     {
         static_assert(std::is_trivially_copyable_v<T>);
         return write_bytes(writer, &value, sizeof(T));
     }
-    
+
     template <class Reader, class T>
     inline bool read_value(Reader& reader, T& value)
     {
@@ -146,7 +153,7 @@ namespace example {
             return readers::read(reader, value);
         }
     }
-    
+
     template <class Writer, class T>
     inline bool write_value(Writer& writer, T const& value)
     {
@@ -159,7 +166,7 @@ namespace example {
             return writers::write(writer, value);
         }
     }
-    
+
     template <class T>
     struct ArrayRef
     {
@@ -186,10 +193,10 @@ namespace example {
         }
     }
     ;
-    
+
     namespace readers 
     {
-        
+
         #pragma pack(push, 1)
         struct MyPODReader
         {
@@ -199,13 +206,13 @@ namespace example {
         ;
         #pragma pack(pop)
         static_assert(std::is_trivially_copyable_v<MyPODReader>, "pack must be POD");
-        
+
         using FixedStringReader = std::array<std::uint8_t, 4>;
-        
+
         using ShortStringReader = ArrayRef<std::uint8_t>;
-        
+
         using DataReader = ArrayRef<float>;
-        
+
         #pragma pack(push, 1)
         struct MyOtherPODReader
         {
@@ -215,22 +222,69 @@ namespace example {
         ;
         #pragma pack(pop)
         static_assert(std::is_trivially_copyable_v<MyOtherPODReader>, "pack must be POD");
-        
-        enum class PlainEnumReader : std::uint8_t 
+
+        struct PlainEnumReader
         {
-            F1 = 0,
-            F2 = 1,
+            using Underlying = std::uint8_t;
+            enum class Value : std::uint8_t
+            {
+                F1 = 0,
+                F2 = 1,
+            }
+            ;
+            Underlying storage{};
+            constexpr PlainEnumReader() = default;
+            constexpr explicit PlainEnumReader(Underlying raw) : storage(raw) {}
+            constexpr Underlying raw() const { return storage; }
+            std::optional<Value> value() const
+            {
+                switch (storage)
+                {
+                    case 0: return Value::F1;
+                    case 1: return Value::F2;
+                    default: return std::nullopt;
+                }
+            }
+            static const PlainEnumReader F1;
+            static const PlainEnumReader F2;
         }
         ;
-        
-        enum class BetterEnumReader : std::uint8_t 
+        inline constexpr PlainEnumReader PlainEnumReader::F1{static_cast<std::uint8_t>(0)};
+        inline constexpr PlainEnumReader PlainEnumReader::F2{static_cast<std::uint8_t>(1)};
+        static_assert(sizeof(PlainEnumReader) == sizeof(std::uint8_t));
+        static_assert(std::is_trivially_copyable_v<PlainEnumReader>);
+
+        struct BetterEnumReader
         {
-            A = 0,
-            B = 1,
-            DEFAULT = 255,
+            using Underlying = std::uint8_t;
+            enum class Value : std::uint8_t
+            {
+                A = 0,
+                B = 1,
+            }
+            ;
+            Underlying storage{};
+            constexpr BetterEnumReader() = default;
+            constexpr explicit BetterEnumReader(Underlying raw) : storage(raw) {}
+            constexpr Underlying raw() const { return storage; }
+            std::optional<Value> value() const
+            {
+                switch (storage)
+                {
+                    case 0: return Value::A;
+                    case 1: return Value::B;
+                    default: return std::nullopt;
+                }
+            }
+            static const BetterEnumReader A;
+            static const BetterEnumReader B;
         }
         ;
-        
+        inline constexpr BetterEnumReader BetterEnumReader::A{static_cast<std::uint8_t>(0)};
+        inline constexpr BetterEnumReader BetterEnumReader::B{static_cast<std::uint8_t>(1)};
+        static_assert(sizeof(BetterEnumReader) == sizeof(std::uint8_t));
+        static_assert(std::is_trivially_copyable_v<BetterEnumReader>);
+
         struct MyFlagsReader 
         {
             std::uint8_t storage{};
@@ -260,28 +314,28 @@ namespace example {
             }
             PlainEnumReader some_stuff() const
             {
-                return static_cast<PlainEnumReader>((static_cast<std::uint64_t>(storage) >> 3) & 0x3ull);
+                return PlainEnumReader(static_cast<std::uint8_t>((static_cast<std::uint64_t>(storage) >> 3) & 0x3ull));
             }
             void set_some_stuff(PlainEnumReader v)
             {
                 auto bits = static_cast<std::uint64_t>(storage);
                 bits &= ~(0x3ull << 3);
-                bits |= (static_cast<std::uint64_t>(v) & 0x3ull) << 3;
+                bits |= (static_cast<std::uint64_t>(v.raw()) & 0x3ull) << 3;
                 storage = static_cast<std::uint8_t>(bits);
             }
         }
         ;
-        
+
         struct SmallSeqReader 
         {
             DataReader  list;
         }
         ;
-        
+
         using MyPODFixedListReader = std::array<MyPODReader, 8>;
-        
+
         using MyOtherPODDynListReader = ArrayRef<MyOtherPODReader>;
-        
+
         struct ComplexSeqReader 
         {
             MyFlagsReader  flags;
@@ -289,22 +343,22 @@ namespace example {
             MyOtherPODDynListReader  other_list;
         }
         ;
-        
+
         struct MyVariantReader : std::variant<MyPODReader, MyOtherPODReader, std::monostate, SmallSeqReader, ComplexSeqReader>
         {
             using variant::variant;
             using variant::operator=;
         }
         ;
-        
+
         struct RootReader 
         {
             ShortStringReader  name;
             MyVariantReader  var;
         }
         ;
-        
-        
+
+
         template <class Reader> bool read(Reader&, MyPODReader&);
         template <class Reader> bool read(Reader&, FixedStringReader&);
         template <class Reader> bool read(Reader&, ShortStringReader&);
@@ -319,7 +373,7 @@ namespace example {
         template <class Reader> bool read(Reader&, ComplexSeqReader&);
         template <class Reader> bool read(Reader&, MyVariantReader&);
         template <class Reader> bool read(Reader&, RootReader&);
-        
+
         template <class Reader> inline bool read(Reader& reader, MyPODReader& value)
         {
             return read_scalar(reader, value);
@@ -358,25 +412,11 @@ namespace example {
         }
         template <class Reader> inline bool read(Reader& reader, PlainEnumReader& value)
         {
-            std::uint8_t raw{};
-            if (!read_scalar(reader, raw)) return false;
-            switch (raw)
-            {
-                case 0: value = PlainEnumReader::F1; return true;
-                case 1: value = PlainEnumReader::F2; return true;
-                default: return false;
-            }
+            return read_scalar(reader, value.storage);
         }
         template <class Reader> inline bool read(Reader& reader, BetterEnumReader& value)
         {
-            std::uint8_t raw{};
-            if (!read_scalar(reader, raw)) return false;
-            switch (raw)
-            {
-                case 0: value = BetterEnumReader::A; return true;
-                case 1: value = BetterEnumReader::B; return true;
-                default: value = BetterEnumReader::DEFAULT; return true;
-            }
+            return read_scalar(reader, value.storage);
         }
         template <class Reader> inline bool read(Reader& reader, MyFlagsReader& value)
         {
@@ -460,10 +500,10 @@ namespace example {
             return true;
         }
     }
-    
+
     namespace writers 
     {
-        
+
         #pragma pack(push, 1)
         struct MyPODWriter
         {
@@ -473,13 +513,13 @@ namespace example {
         ;
         #pragma pack(pop)
         static_assert(std::is_trivially_copyable_v<MyPODWriter>, "pack must be POD");
-        
+
         using FixedStringWriter = std::array<std::uint8_t, 4>;
-        
+
         using ShortStringWriter = std::span<std::uint8_t>;
-        
+
         using DataWriter = std::span<float>;
-        
+
         #pragma pack(push, 1)
         struct MyOtherPODWriter
         {
@@ -489,22 +529,69 @@ namespace example {
         ;
         #pragma pack(pop)
         static_assert(std::is_trivially_copyable_v<MyOtherPODWriter>, "pack must be POD");
-        
-        enum class PlainEnumWriter : std::uint8_t 
+
+        struct PlainEnumWriter
         {
-            F1 = 0,
-            F2 = 1,
+            using Underlying = std::uint8_t;
+            enum class Value : std::uint8_t
+            {
+                F1 = 0,
+                F2 = 1,
+            }
+            ;
+            Underlying storage{};
+            constexpr PlainEnumWriter() = default;
+            constexpr explicit PlainEnumWriter(Underlying raw) : storage(raw) {}
+            constexpr Underlying raw() const { return storage; }
+            std::optional<Value> value() const
+            {
+                switch (storage)
+                {
+                    case 0: return Value::F1;
+                    case 1: return Value::F2;
+                    default: return std::nullopt;
+                }
+            }
+            static const PlainEnumWriter F1;
+            static const PlainEnumWriter F2;
         }
         ;
-        
-        enum class BetterEnumWriter : std::uint8_t 
+        inline constexpr PlainEnumWriter PlainEnumWriter::F1{static_cast<std::uint8_t>(0)};
+        inline constexpr PlainEnumWriter PlainEnumWriter::F2{static_cast<std::uint8_t>(1)};
+        static_assert(sizeof(PlainEnumWriter) == sizeof(std::uint8_t));
+        static_assert(std::is_trivially_copyable_v<PlainEnumWriter>);
+
+        struct BetterEnumWriter
         {
-            A = 0,
-            B = 1,
-            DEFAULT = 255,
+            using Underlying = std::uint8_t;
+            enum class Value : std::uint8_t
+            {
+                A = 0,
+                B = 1,
+            }
+            ;
+            Underlying storage{};
+            constexpr BetterEnumWriter() = default;
+            constexpr explicit BetterEnumWriter(Underlying raw) : storage(raw) {}
+            constexpr Underlying raw() const { return storage; }
+            std::optional<Value> value() const
+            {
+                switch (storage)
+                {
+                    case 0: return Value::A;
+                    case 1: return Value::B;
+                    default: return std::nullopt;
+                }
+            }
+            static const BetterEnumWriter A;
+            static const BetterEnumWriter B;
         }
         ;
-        
+        inline constexpr BetterEnumWriter BetterEnumWriter::A{static_cast<std::uint8_t>(0)};
+        inline constexpr BetterEnumWriter BetterEnumWriter::B{static_cast<std::uint8_t>(1)};
+        static_assert(sizeof(BetterEnumWriter) == sizeof(std::uint8_t));
+        static_assert(std::is_trivially_copyable_v<BetterEnumWriter>);
+
         struct MyFlagsWriter 
         {
             std::uint8_t storage{};
@@ -534,28 +621,28 @@ namespace example {
             }
             PlainEnumWriter some_stuff() const
             {
-                return static_cast<PlainEnumWriter>((static_cast<std::uint64_t>(storage) >> 3) & 0x3ull);
+                return PlainEnumWriter(static_cast<std::uint8_t>((static_cast<std::uint64_t>(storage) >> 3) & 0x3ull));
             }
             void set_some_stuff(PlainEnumWriter v)
             {
                 auto bits = static_cast<std::uint64_t>(storage);
                 bits &= ~(0x3ull << 3);
-                bits |= (static_cast<std::uint64_t>(v) & 0x3ull) << 3;
+                bits |= (static_cast<std::uint64_t>(v.raw()) & 0x3ull) << 3;
                 storage = static_cast<std::uint8_t>(bits);
             }
         }
         ;
-        
+
         struct SmallSeqWriter 
         {
             DataWriter const& list;
         }
         ;
-        
+
         using MyPODFixedListWriter = std::array<MyPODWriter, 8>;
-        
+
         using MyOtherPODDynListWriter = std::span<MyOtherPODWriter>;
-        
+
         struct ComplexSeqWriter 
         {
             MyFlagsWriter const& flags;
@@ -563,22 +650,22 @@ namespace example {
             MyOtherPODDynListWriter const& other_list;
         }
         ;
-        
+
         struct MyVariantWriter : std::variant<MyPODWriter const*, MyOtherPODWriter const*, std::monostate, SmallSeqWriter const*, ComplexSeqWriter const*>
         {
             using variant::variant;
             using variant::operator=;
         }
         ;
-        
+
         struct RootWriter 
         {
             ShortStringWriter const& name;
             MyVariantWriter const& var;
         }
         ;
-        
-        
+
+
         template <class Writer> bool write(Writer&, MyPODWriter const&);
         template <class Writer> bool write(Writer&, FixedStringWriter const&);
         template <class Writer> bool write(Writer&, ShortStringWriter const&);
@@ -593,7 +680,7 @@ namespace example {
         template <class Writer> bool write(Writer&, ComplexSeqWriter const&);
         template <class Writer> bool write(Writer&, MyVariantWriter const&);
         template <class Writer> bool write(Writer&, RootWriter const&);
-        
+
         template <class Writer> inline bool write(Writer& writer, MyPODWriter const& value)
         {
             return write_scalar(writer, value);
@@ -636,13 +723,11 @@ namespace example {
         }
         template <class Writer> inline bool write(Writer& writer, PlainEnumWriter const& value)
         {
-            auto raw = static_cast<std::uint8_t>(value);
-            return write_scalar(writer, raw);
+            return write_scalar(writer, value.storage);
         }
         template <class Writer> inline bool write(Writer& writer, BetterEnumWriter const& value)
         {
-            auto raw = static_cast<std::uint8_t>(value);
-            return write_scalar(writer, raw);
+            return write_scalar(writer, value.storage);
         }
         template <class Writer> inline bool write(Writer& writer, MyFlagsWriter const& value)
         {

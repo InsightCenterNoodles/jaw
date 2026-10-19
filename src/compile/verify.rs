@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use itertools::Itertools;
 use thiserror::Error;
 
@@ -142,6 +142,10 @@ fn verify_unique<'a>(iter: impl Iterator<Item = &'a String>) -> anyhow::Result<(
 fn verify_pack(world: &World, ty: &Type, value: &Pack) -> anyhow::Result<()> {
     let ctx = || format!("while verifying pack {}", Typeref::from(ty));
 
+    if value.members.is_empty() {
+        bail!("pack declarations must contain at least one member");
+    }
+
     verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
 
     for m in value.members.iter() {
@@ -152,18 +156,15 @@ fn verify_pack(world: &World, ty: &Type, value: &Pack) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Verifies enum invariants: unique names/values, unsigned integer base type, and valid default.
+/// Verifies enum invariants: non-empty unique members, reservations, and unsigned base type.
 fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
     let ctx = || format!("while verifying enum {}", Typeref::from(ty));
 
-    verify_unique(
-        value
-            .members
-            .iter()
-            .map(|x| &x.name)
-            .chain(value.default.iter().map(|x| &x.name)),
-    )
-    .with_context(ctx)?;
+    if value.members.is_empty() {
+        bail!("enum declarations must contain at least one member");
+    }
+
+    verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
 
     {
         let mut set = std::collections::HashSet::<i64>::default();
@@ -193,17 +194,12 @@ fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
             .with_context(ctx)?;
     }
 
-    if let Some(default) = &value.default {
-        underlying
-            .verify_can_fit(default.value as i128)
-            .with_context(|| {
-                format!(
-                    "checking default {} at {}",
-                    default.name, default.defined_at
-                )
-            })
-            .with_context(ctx)?;
-    }
+    verify_reserved_ranges(
+        &value.reserved,
+        underlying,
+        value.members.iter().map(|m| m.value as u64),
+    )
+    .with_context(ctx)?;
 
     Ok(())
 }
@@ -211,6 +207,10 @@ fn verify_enum(world: &World, ty: &Type, value: &Enum) -> anyhow::Result<()> {
 /// Verifies bitfield invariants: unsigned underlying type, non-overlapping valid ranges, and member types.
 fn verify_bitfld(world: &World, ty: &Type, value: &Bitfld) -> anyhow::Result<()> {
     let ctx = || format!("while verifying bitfld {}", Typeref::from(ty));
+
+    if value.members.is_empty() {
+        bail!("bitfield declarations must contain at least one member");
+    }
 
     verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
 
@@ -277,6 +277,10 @@ fn verify_bitfield_member_type(world: &World, member: &BitfldMember) -> anyhow::
 fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<()> {
     let ctx = || format!("while verifying variant {}", Typeref::from(ty));
 
+    if value.members.is_empty() {
+        bail!("variant declarations must contain at least one member");
+    }
+
     let underlying = verify_is_int_of(world, value.discriminant, Signedness::Unsigned)
         .context("underlying type")
         .with_context(ctx)?;
@@ -295,6 +299,13 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
         check_value(member.value, &member.defined_at).with_context(ctx)?;
     }
 
+    verify_reserved_ranges(
+        &value.reserved,
+        underlying,
+        value.members.iter().map(|m| m.value),
+    )
+    .with_context(ctx)?;
+
     Ok(())
 }
 
@@ -302,10 +313,58 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
 fn verify_sequence(world: &World, ty: &Type, value: &Sequence) -> anyhow::Result<()> {
     let ctx = || format!("while verifying sequence {}", Typeref::from(ty));
 
+    if value.members.is_empty() {
+        bail!("sequence declarations must contain at least one member");
+    }
+
     verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
 
     for member in &value.members {
         verify_structmem(world, ty, member).with_context(ctx)?;
+    }
+
+    Ok(())
+}
+
+fn verify_reserved_ranges(
+    ranges: &[crate::intermediate::ReservedRange],
+    underlying: Primitive,
+    values: impl Iterator<Item = u64>,
+) -> anyhow::Result<()> {
+    for range in ranges {
+        if range.start > range.end {
+            bail!(
+                "reserved range start {} is greater than end {} at {}",
+                range.start,
+                range.end,
+                range.defined_at
+            );
+        }
+        underlying.verify_can_fit(range.start as i128)?;
+        underlying.verify_can_fit(range.end as i128)?;
+    }
+
+    for (index, range) in ranges.iter().enumerate() {
+        for other in &ranges[..index] {
+            if range.start <= other.end && other.start <= range.end {
+                bail!(
+                    "reserved range {}..={} overlaps {}..={}",
+                    range.start,
+                    range.end,
+                    other.start,
+                    other.end
+                );
+            }
+        }
+    }
+
+    for value in values {
+        if ranges
+            .iter()
+            .any(|range| range.start <= value && value <= range.end)
+        {
+            bail!("value {value} is reserved");
+        }
     }
 
     Ok(())

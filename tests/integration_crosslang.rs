@@ -253,6 +253,39 @@ fn run_rust_read(exe: &Path, in_path: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
+fn golden_bytes() -> Result<Vec<u8>, DynError> {
+    let text = include_str!("data/example.golden.hex");
+    let digits: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if !digits.len().is_multiple_of(2) {
+        return Err("golden hex fixture has an odd number of digits".into());
+    }
+
+    let (pairs, remainder) = digits.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+
+    pairs
+        .iter()
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair)?;
+            Ok(u8::from_str_radix(pair, 16)?)
+        })
+        .collect()
+}
+
+fn assert_golden(path: &Path, expected: &[u8]) -> Result<(), DynError> {
+    let actual = fs::read(path)?;
+    if actual != expected {
+        return Err(format!(
+            "{} does not match the canonical wire fixture ({} actual bytes, {} expected bytes)",
+            path.display(),
+            actual.len(),
+            expected.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
 #[test]
 fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
     if !has_prog("cmake", "--version") {
@@ -290,19 +323,23 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
     let cpp_dump = dumps_dir.join("from_cpp.bin");
     let py_dump = dumps_dir.join("from_py.bin");
     let rs_dump = dumps_dir.join("from_rs.bin");
+    let golden = golden_bytes()?;
 
     // 1) Dump from C++; validate via Python and Rust
     run_cpp_dump(&cpp_exe, &cpp_dump)?;
+    assert_golden(&cpp_dump, &golden)?;
     run_python_read(py, &bindings.python_driver, &bindings.python_dir, &cpp_dump)?;
     run_rust_read(&rust_exe, &cpp_dump)?;
 
     // 2) Dump from Python; validate via C++ and Rust
     run_python_dump(py, &bindings.python_driver, &bindings.python_dir, &py_dump)?;
+    assert_golden(&py_dump, &golden)?;
     run_cpp_read(&cpp_exe, &py_dump)?;
     run_rust_read(&rust_exe, &py_dump)?;
 
     // 3) Dump from Rust; validate via Python and C++
     run_rust_dump(&rust_exe, &rs_dump)?;
+    assert_golden(&rs_dump, &golden)?;
     run_python_read(py, &bindings.python_driver, &bindings.python_dir, &rs_dump)?;
     run_cpp_read(&cpp_exe, &rs_dump)?;
 

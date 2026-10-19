@@ -131,6 +131,12 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
     out.wln("from typing import Iterable");
     out.wln("from typing import ClassVar");
     out.newline();
+    out.wln("if sys.byteorder != 'little':");
+    {
+        let mut idt = out.indent();
+        idt.wln("raise RuntimeError('jaw only supports little-endian hosts')");
+    }
+    out.newline();
 
     out.wln("class Reader:");
     {
@@ -236,7 +242,6 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
         idt.wln("raw = reader.read_bytes(count * size)");
         idt.wln("arr = array.array(typecode)");
         idt.wln("arr.frombytes(raw)");
-        idt.wln("if sys.byteorder != 'little' and arr.itemsize > 1: arr.byteswap()");
         idt.wln("return arr");
     }
     out.newline();
@@ -253,12 +258,6 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             let mut body = idt.indent();
             body.wln("arr = array.array(typecode, values)");
         }
-        idt.wln("if sys.byteorder != 'little' and arr.itemsize > 1:");
-        {
-            let mut body = idt.indent();
-            body.wln("arr = arr[:]");
-            body.wln("arr.byteswap()");
-        }
         idt.wln("writer.write_bytes(arr.tobytes())");
     }
 }
@@ -274,16 +273,37 @@ fn emit_type_definition(
     match &ty.kind {
         TypeKind::Enum(enm) => {
             out.wln("@enum.unique");
-            out.wln(&format!("class {name}(enum.IntEnum):"));
+            out.wln(&format!("class {name}Value(enum.IntEnum):"));
             {
                 let mut idt = out.indent();
                 for m in &enm.members {
                     idt.wln(&format!("{} = {}", sanitize(&m.name), m.value));
                 }
-                if let Some(default) = &enm.default {
-                    idt.wln(&format!("{} = {}", sanitize(&default.name), default.value));
-                    idt.wln(&format!("__default__ = {}", sanitize(&default.name)));
+            }
+            out.newline();
+            out.wln("@dataclass(frozen=True)");
+            out.wln(&format!("class {name}:"));
+            {
+                let mut idt = out.indent();
+                idt.wln("raw: int");
+                idt.wln("def __int__(self):");
+                {
+                    let mut body = idt.indent();
+                    body.wln("return self.raw");
                 }
+                idt.wln(&format!("def value(self) -> {name}Value:"));
+                {
+                    let mut body = idt.indent();
+                    body.wln(&format!("return {name}Value(self.raw)"));
+                }
+            }
+            for m in &enm.members {
+                out.wln(&format!(
+                    "{0}.{1} = {0}({2})",
+                    name,
+                    sanitize(&m.name),
+                    m.value
+                ));
             }
             out.newline();
         }
@@ -412,18 +432,7 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             let mut idt = out.indent();
             let base_read = read_primitive_method(ctx, enm.underlying)?;
             idt.wln(&format!("raw = reader.{base_read}()"));
-            idt.wln(&format!("if raw in {name}._value2member_map_:"));
-            {
-                let mut body = idt.indent();
-                body.wln(&format!("return {name}(raw)"));
-            }
-            if let Some(default) = &enm.default {
-                idt.wln(&format!("return {name}.{}", sanitize(&default.name)));
-            } else {
-                idt.wln(&format!(
-                    "raise ValueError(f'invalid discriminant for {name}: {{raw!r}}')"
-                ));
-            }
+            idt.wln(&format!("return {name}(raw)"));
             idt.newline();
         }
         TypeKind::Bitfld(bitfld) => {
@@ -560,7 +569,7 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             out.wln(&format!("def write_{name}(writer, value):"));
             let mut idt = out.indent();
             let write_fn = write_primitive_method(ctx, enm.underlying)?;
-            idt.wln(&format!("writer.{write_fn}(int(value))"));
+            idt.wln(&format!("writer.{write_fn}(value.raw)"));
             idt.newline();
         }
         TypeKind::Bitfld(bitfld) => {
@@ -718,30 +727,9 @@ fn emit_bitfield_member_read(
         TypeKind::Primitive(_) => {
             out.wln(&format!("{field_name} = int({value_expr})"));
         }
-        TypeKind::Enum(enm) => {
+        TypeKind::Enum(_enm) => {
             let enum_name = ctx.name_of(ty_id);
-            out.wln(&format!("{field_name}_raw = int({value_expr})"));
-            out.wln(&format!(
-                "if {field_name}_raw in {enum_name}._value2member_map_:"
-            ));
-            {
-                let mut body = out.indent();
-                body.wln(&format!("{field_name} = {enum_name}({field_name}_raw)"));
-            }
-            if let Some(default) = &enm.default {
-                out.wln("else:");
-                let mut body = out.indent();
-                body.wln(&format!(
-                    "{field_name} = {enum_name}.{}",
-                    sanitize(&default.name)
-                ));
-            } else {
-                out.wln("else:");
-                let mut body = out.indent();
-                body.wln(&format!(
-                    "raise ValueError(f'invalid discriminant for {enum_name} in bitfield: {{{field_name}_raw!r}}')"
-                ));
-            }
+            out.wln(&format!("{field_name} = {enum_name}(int({value_expr}))"));
         }
         _ => bail!("unsupported bitfield member type"),
     }

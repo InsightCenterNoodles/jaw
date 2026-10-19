@@ -61,7 +61,14 @@ pub struct EnumMember {
 pub struct Enum {
     pub ty: TypeName,
     pub members: Vec<EnumMember>,
-    pub default: Option<EnumMember>,
+    pub reserved: Vec<ReservedRange>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReservedRange {
+    pub start: u64,
+    pub end: u64,
+    pub defined_at: SourceLocation,
 }
 
 #[derive(Debug)]
@@ -91,6 +98,7 @@ pub struct VariantMember {
 pub struct Variant {
     pub ty: TypeName,
     pub members: Vec<VariantMember>,
+    pub reserved: Vec<ReservedRange>,
 }
 
 /// Sequence of named fields (a typical record/struct).

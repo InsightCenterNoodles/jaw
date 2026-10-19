@@ -28,15 +28,14 @@ pub fn emit_dynarr(
         .and_then(|x| x.iter().find(|x| x.as_str() == name.as_str()))
         .is_some();
 
-    if use_bytes {
-        if let Some(p) = ctx.direct_primitive(id) {
-            if !p.is_u8() {
-                return Err(anyhow::anyhow!(
-                    "can only replace dynamic array {} with Bytes if primitive type is u8",
-                    name
-                ));
-            }
-        }
+    if use_bytes
+        && let Some(p) = ctx.direct_primitive(id)
+        && !p.is_u8()
+    {
+        return Err(anyhow::anyhow!(
+            "can only replace dynamic array {} with Bytes if primitive type is u8",
+            name
+        ));
     }
 
     {

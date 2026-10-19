@@ -260,11 +260,15 @@ fn enum_rules_are_enforced() {
         "Duplicate enumerant value",
     );
     assert_compile_err_contains("enum Bad : u8\n- A = 256\n", "cannot fit");
-    assert_compile_err_contains("enum Bad : u8\n> Unknown = 256\n- A = 1\n", "cannot fit");
     assert_compile_err_contains(
-        "enum Bad : u8\n> A = 0\n- A = 1\n",
-        "all names must be unique: A",
+        "enum Bad : u8\n- A = 1\n- reserve 1\n",
+        "value 1 is reserved",
     );
+    assert_compile_err_contains(
+        "enum Bad : u8\n- A = 1\n- reserve 2..=4\n- reserve 4..=5\n",
+        "overlaps",
+    );
+    assert_compile_err_contains("enum Bad : u8\n- A = 1\n- reserve 300\n", "cannot fit");
 }
 
 /// Test: bitfield declarations validate base/member types and ranges.
@@ -315,6 +319,23 @@ fn variant_rules_are_enforced() {
         "duplicate discriminant",
     );
     assert_compile_err_contains("variant Bad : u8\n- 256 => void\n", "cannot fit");
+    assert_compile_err_contains(
+        "variant Bad : u8\n- 1 => void\n- reserve 1\n",
+        "value 1 is reserved",
+    );
+}
+
+#[test]
+fn empty_declarations_are_rejected() {
+    for (source, expected) in [
+        ("pack Empty\n", "pack declarations"),
+        ("seq Empty\n", "sequence declarations"),
+        ("enum Empty : u8\n", "enum declarations"),
+        ("bits Empty : u8\n", "bitfield declarations"),
+        ("variant Empty : u8\n", "variant declarations"),
+    ] {
+        assert_compile_err_contains(source, expected);
+    }
 }
 
 /// Test: arrays validate length/count and element constraints.
@@ -415,7 +436,7 @@ fn merge_world_basic() {
                 },
             ),
             (
-                TypeID(300),
+                TypeID(301),
                 Type {
                     ident: TypeName::from_string(Default::default(), "type_2").unwrap(),
                     defined_at: Default::default(),
@@ -429,7 +450,7 @@ fn merge_world_basic() {
         ]
         .into_iter()
         .collect(),
-        sorted: vec![TypeID(100), TypeID(300)],
+        sorted: vec![TypeID(100), TypeID(301)],
         module_name: "test1".into(),
     };
 
@@ -438,4 +459,45 @@ fn merge_world_basic() {
     assert_eq!(merge.sorted, merge_truth.sorted);
     assert_eq!(merge.definitions, merge_truth.definitions);
     assert_eq!(merge.module_name, merge_truth.module_name);
+}
+
+/// Test: merging normally compiled worlds does not overwrite the first world's final type.
+#[test]
+fn merge_compiled_worlds_preserves_definitions_and_references() {
+    let first = compile_src(
+        r#"
+seq Local
+- value : u16
+
+variant Root : u8
+- 1 => Local
+"#,
+    )
+    .expect("compile first world");
+    let second = compile_src(
+        r#"
+seq Other
+- value : u32
+"#,
+    )
+    .expect("compile second world");
+
+    let merged = first.merge(second).expect("merge compiled worlds");
+    let user_types: Vec<_> = merged
+        .iter()
+        .filter(|(_, ty)| !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_)))
+        .map(|(_, ty)| ty.ident.to_string())
+        .collect();
+
+    assert_eq!(user_types, ["Local", "Root", "Other"]);
+
+    let root = merged
+        .iter()
+        .find_map(|(_, ty)| (ty.ident.as_str() == "Root").then_some(ty))
+        .expect("Root should survive the merge");
+    let TypeKind::Variant(root) = &root.kind else {
+        panic!("Root should remain a variant");
+    };
+    let payload = merged.lookup(root.members[0].ty);
+    assert_eq!(payload.ident.as_str(), "Local");
 }

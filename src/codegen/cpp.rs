@@ -186,13 +186,20 @@ impl<'a> CppContext<'a> {
 fn emit_preamble(out: &mut Outfile, namespace: &str) -> Result<()> {
     *out += "#pragma once";
     out.wln("#include <array>");
+    out.wln("#include <climits>");
     out.wln("#include <cstddef>");
     out.wln("#include <cstdint>");
     out.wln("#include <limits>");
+    out.wln("#include <bit>");
+    out.wln("#include <optional>");
     out.wln("#include <span>");
     out.wln("#include <type_traits>");
     out.wln("#include <variant>");
     out.wln("#include <utility>");
+    out.wln("static_assert(CHAR_BIT == 8, \"jaw requires 8-bit bytes\");");
+    out.wln("static_assert(std::endian::native == std::endian::little, \"jaw only supports little-endian targets\");");
+    out.wln("static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559, \"jaw requires IEEE-754 binary32 float\");");
+    out.wln("static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559, \"jaw requires IEEE-754 binary64 double\");");
     out.newline();
     out.wln("// Reader concept: bool read_bytes(std::byte*, size_t);");
     out.wln("// Reader concept: std::span<std::byte> advance_bytes(size_t);");
@@ -395,9 +402,8 @@ fn emit_type_def_fwd(
         TypeKind::Pack(_) => {
             out.wln(&format!("struct {};", name));
         }
-        TypeKind::Enum(enm) => {
-            let base = ctx.cpp_type(enm.underlying, ns)?;
-            out.wln(&format!("enum class {} : {};", name, base));
+        TypeKind::Enum(_) => {
+            out.wln(&format!("struct {};", name));
         }
         TypeKind::Bitfld(_) => {
             out.wln(&format!("struct {};", name));
@@ -469,17 +475,64 @@ fn emit_type_def(
         }
         TypeKind::Enum(enm) => {
             let base = ctx.cpp_type(enm.underlying, ns)?;
-            out.wln(&format!("enum class {} : {} ", name, base));
+            out.wln(&format!("struct {}", name));
             {
                 let mut idt = out.indent();
-                for m in &enm.members {
-                    idt.wln(&format!("{} = {},", sanitize(&m.name), m.value));
+                idt.wln(&format!("using Underlying = {};", base));
+                idt.wln(&format!("enum class Value : {}", base));
+                {
+                    let mut values = idt.indent();
+                    for m in &enm.members {
+                        values.wln(&format!("{} = {},", sanitize(&m.name), m.value));
+                    }
                 }
-                if let Some(default) = &enm.default {
-                    idt.wln(&format!("{} = {},", sanitize(&default.name), default.value));
+                idt.wln(";");
+                idt.wln("Underlying storage{};");
+                idt.wln(&format!("constexpr {}() = default;", name));
+                idt.wln(&format!(
+                    "constexpr explicit {}(Underlying raw) : storage(raw) {{}}",
+                    name
+                ));
+                idt.wln("constexpr Underlying raw() const { return storage; }");
+                idt.wln("std::optional<Value> value() const");
+                {
+                    let mut value = idt.indent();
+                    value.wln("switch (storage)");
+                    {
+                        let mut cases = value.indent();
+                        for m in &enm.members {
+                            cases.wln(&format!(
+                                "case {}: return Value::{};",
+                                m.value,
+                                sanitize(&m.name)
+                            ));
+                        }
+                        cases.wln("default: return std::nullopt;");
+                    }
+                }
+                for m in &enm.members {
+                    idt.wln(&format!("static const {} {};", name, sanitize(&m.name)));
                 }
             }
             out.wln(";");
+            for m in &enm.members {
+                out.wln(&format!(
+                    "inline constexpr {} {}::{}{{static_cast<{}>({})}};",
+                    name,
+                    name,
+                    sanitize(&m.name),
+                    base,
+                    m.value
+                ));
+            }
+            out.wln(&format!(
+                "static_assert(sizeof({}) == sizeof({}));",
+                name, base
+            ));
+            out.wln(&format!(
+                "static_assert(std::is_trivially_copyable_v<{}>);",
+                name
+            ));
         }
         TypeKind::Bitfld(bitfld) => {
             let under_prim = ctx.underlying_primitive(bitfld.underlying)?;
@@ -489,7 +542,10 @@ fn emit_type_def(
                 let mut idt = out.indent();
                 idt.wln(&format!("{} storage{{}};", base));
                 idt.wln(&format!("{}() = default;", name));
-                idt.wln(&format!("explicit {}({} raw) : storage(raw) {{}}", name, base));
+                idt.wln(&format!(
+                    "explicit {}({} raw) : storage(raw) {{}}",
+                    name, base
+                ));
 
                 for m in &bitfld.members {
                     emit_bitfield_getter(ctx, &mut idt, m, ns)?;
@@ -619,7 +675,6 @@ fn emit_read_impl(
             }
         }
         TypeKind::Enum(enm) => {
-            let base = ctx.cpp_type(enm.underlying, Namespace::Read)?;
             out.wln(&format!(
                 "template <class Reader> inline bool read(Reader& reader, {}& value)",
                 name
@@ -627,29 +682,8 @@ fn emit_read_impl(
 
             {
                 let mut idt = out.indent();
-                idt.wln(&format!("{} raw{{}};", base));
-                idt.wln("if (!read_scalar(reader, raw)) return false;");
-                idt.wln("switch (raw)");
-                {
-                    let mut sw = idt.indent();
-                    for m in &enm.members {
-                        sw.wln(&format!(
-                            "case {}: value = {}::{}; return true;",
-                            m.value,
-                            name,
-                            sanitize(&m.name)
-                        ));
-                    }
-                    if let Some(default) = &enm.default {
-                        sw.wln(&format!(
-                            "default: value = {}::{}; return true;",
-                            name,
-                            sanitize(&default.name)
-                        ));
-                    } else {
-                        sw.wln("default: return false;");
-                    }
-                }
+                let _ = enm;
+                idt.wln("return read_scalar(reader, value.storage);");
             }
         }
         TypeKind::Bitfld(_bitfld) => {
@@ -807,15 +841,14 @@ fn emit_write_impl(
             }
         }
         TypeKind::Enum(enm) => {
-            let base = ctx.cpp_type(enm.underlying, Namespace::Write)?;
             out.wln(&format!(
                 "template <class Writer> inline bool write(Writer& writer, {} const& value)",
                 name
             ));
             {
                 let mut idt = out.indent();
-                idt.wln(&format!("auto raw = static_cast<{}>(value);", base));
-                idt.wln("return write_scalar(writer, raw);");
+                let _ = enm;
+                idt.wln("return write_scalar(writer, value.storage);");
             }
         }
         TypeKind::Bitfld(_bitfld) => {
@@ -1021,10 +1054,18 @@ fn emit_bitfield_getter(
     out.wln(&format!("{} {}() const", mty, getter));
     {
         let mut idt = out.indent();
-        idt.wln(&format!(
-            "return static_cast<{}>((static_cast<std::uint64_t>(storage) >> {}) & 0x{:X}ull);",
-            mty, start, mask
-        ));
+        if let TypeKind::Enum(enm) = &ctx.world.lookup(m.underlying).kind {
+            let base = ctx.cpp_type(enm.underlying, ns)?;
+            idt.wln(&format!(
+                "return {}(static_cast<{}>((static_cast<std::uint64_t>(storage) >> {}) & 0x{:X}ull));",
+                mty, base, start, mask
+            ));
+        } else {
+            idt.wln(&format!(
+                "return static_cast<{}>((static_cast<std::uint64_t>(storage) >> {}) & 0x{:X}ull);",
+                mty, start, mask
+            ));
+        }
     }
 
     Ok(())
@@ -1050,9 +1091,14 @@ fn emit_bitfield_setter(
         let mut idt = out.indent();
         idt.wln("auto bits = static_cast<std::uint64_t>(storage);");
         idt.wln(&format!("bits &= ~(0x{:X}ull << {});", mask, start));
+        let value = if matches!(ctx.world.lookup(m.underlying).kind, TypeKind::Enum(_)) {
+            "v.raw()"
+        } else {
+            "v"
+        };
         idt.wln(&format!(
-            "bits |= (static_cast<std::uint64_t>(v) & 0x{:X}ull) << {};",
-            mask, start
+            "bits |= (static_cast<std::uint64_t>({}) & 0x{:X}ull) << {};",
+            value, mask, start
         ));
         idt.wln(&format!("storage = static_cast<{}>(bits);", base));
     }

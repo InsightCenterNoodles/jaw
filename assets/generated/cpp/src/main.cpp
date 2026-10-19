@@ -158,7 +158,7 @@ static void validate(std::span<std::byte> data) {
 
         DEMAND(ref.flags.is_thing() == 1);
         DEMAND(ref.flags.another_thing() == 2);
-        DEMAND(ref.flags.some_stuff() == PlainEnumReader::F2);
+        DEMAND(ref.flags.some_stuff().value() == PlainEnumReader::Value::F2);
 
         // fixed array of POD packs
         DEMAND(ref.list.size() == 8);
@@ -185,13 +185,14 @@ static void validate(std::span<std::byte> data) {
         DEMAND(others[2].second == (std::array<std::uint8_t, 4>{4, 5, 6, 7}));
     }
 
-    // Extra self-check: enum default behavior
+    // Extra self-check: raw enum values are preserved and validated on demand.
     {
         std::vector<std::byte> buf { std::byte{2} };
         auto r2 = VecReader { .src = buf };
         BetterEnumReader e{};
         DEMAND(read(r2, e));
-        DEMAND(e == BetterEnumReader::DEFAULT);
+        DEMAND(e.raw() == 2);
+        DEMAND(!e.value().has_value());
     }
 
     std::printf("Validation complete\n");

@@ -63,10 +63,10 @@ fn find_cycle(defs: &HashMap<TypeID, Type>) -> Option<Vec<TypeID>> {
                 cycle.push(dep);
                 return Some(cycle);
             }
-            if !matches!(state.get(&dep), Some(State::Visited)) {
-                if let Some(found) = dfs(dep, defs, state, stack) {
-                    return Some(found);
-                }
+            if !matches!(state.get(&dep), Some(State::Visited))
+                && let Some(found) = dfs(dep, defs, state, stack)
+            {
+                return Some(found);
             }
         }
 

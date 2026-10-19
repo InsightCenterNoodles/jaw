@@ -17,7 +17,10 @@ pub fn emit_bitfld(
 ) -> Result<()> {
     // bitfields only have one form
     let name = ctx.name_of(id);
-    let base = ctx.name_of(kind.underlying);
+    let base = ctx
+        .underlying_primitive(kind.underlying)
+        .expect("verified bitfield base should resolve to a primitive")
+        .to_string();
 
     out.wln("#[derive(Debug, Default, Clone, Copy, PartialEq)]");
     out.wln("#[repr(transparent)]");
@@ -53,7 +56,7 @@ pub fn emit_bitfld(
     //
 
     emit_jread(&name, None, out, |idt| {
-        idt.wln(&format!("Ok(Self({}))", read_expr(ctx, kind.underlying)));
+        idt.wln(&format!("Ok(Self({base}::jaw_read(reader)?))"));
         Ok(())
     })?;
 
@@ -109,11 +112,7 @@ fn emit_convert(ctx: &RustContext, out: &mut impl Sink, id: TypeID, kind: &Bitfl
                 let mut idt = idt.indent();
 
                 for m in &kind.members {
-                    if let TypeKind::Enum(_) = ctx.lookup(m.underlying).kind {
-                        idt.wln(&format!("{0} : value.{0}()?,", m.name));
-                    } else {
-                        idt.wln(&format!("{0} : value.{0}(),", m.name));
-                    }
+                    idt.wln(&format!("{0} : value.{0}(),", m.name));
                 }
             }
 
@@ -126,10 +125,7 @@ fn emit_getter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember) {
     let field_ty = ctx.name_of(m.underlying);
 
     match &ctx.lookup(m.underlying).kind {
-        TypeKind::Enum(_) => out.wln(&format!(
-            "pub fn {}(&self) -> std::io::Result<{}>",
-            m.name, field_ty
-        )),
+        TypeKind::Enum(_) => out.wln(&format!("pub fn {}(&self) -> {}", m.name, field_ty)),
         _ => {
             out.wln(&format!("pub fn {}(&self) -> {}", m.name, field_ty));
         }
@@ -150,33 +146,7 @@ fn emit_getter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember) {
                     "let raw = ((self.0 >> {start}) & 0x{mask:X}) as {};\n",
                     ctx.name_of(enm.underlying)
                 ));
-                idt.wln("let ret = match raw");
-
-                {
-                    let mut idt = idt.indent();
-
-                    for mem in &enm.members {
-                        idt.wln(&format!(
-                            "{} => {}::{},",
-                            mem.value,
-                            ctx.name_of(m.underlying),
-                            mem.name
-                        ));
-                    }
-                    if let Some(default) = &enm.default {
-                        idt.wln(&format!(
-                            "_ => {}::{},",
-                            ctx.name_of(m.underlying),
-                            default.name
-                        ));
-                    } else {
-                        idt.wln(
-                            "_ => return Err(invalid_data(\"invalid discriminant in bitfield\")),",
-                        );
-                    }
-                }
-
-                idt.wln(";Ok(ret)");
+                idt.wln(&format!("{}::from_raw(raw)", ctx.name_of(m.underlying)));
             }
             _ => idt.wln(&format!(
                 "((self.0 >> {start}) & 0x{mask:X}) as {}",
@@ -199,8 +169,13 @@ fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember, base: &
         let width = end - start + 1;
         let mask = (1u128 << width) - 1;
 
-        idt.wln(&format!("let v = v as {base};"));
+        if matches!(ctx.lookup(m.underlying).kind, TypeKind::Enum(_)) {
+            idt.wln("let v = v.raw();");
+        } else {
+            idt.wln(&format!("let v = v as {base};"));
+        }
 
+        idt.wln(&format!("self.0 &= !(0x{mask:X} << {start});"));
         idt.wln(&format!("self.0 |= (v & 0x{mask:X}) << {start};"));
     }
 }

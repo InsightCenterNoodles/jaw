@@ -134,7 +134,7 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
             let mut mtch = idt.indent();
             for m in &variant.members {
                 let case_name = variant_case_name(ctx, m)?;
-                mtch.wln(&format!("{} => ", m.value));
+                mtch.wln(&format!("{} =>", m.value));
                 {
                     let mut body = mtch.indent();
 
@@ -159,7 +159,7 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
             let mut mtch = idt.indent();
             for m in &variant.members {
                 let case_name = variant_case_name(ctx, m)?;
-                mtch.wln(&format!("{} => ", m.value));
+                mtch.wln(&format!("{} =>", m.value));
                 {
                     let mut body = mtch.indent();
 

@@ -106,9 +106,9 @@ pub fn emit_pack(
 
 fn reader(out: &mut impl Sink, name: &str) -> Result<()> {
     emit_jread(name, None, out, |idt| {
-        idt.wln("// Safety: Bytes will be overwritten anyway");
-        idt.wln("#[allow(invalid_value)]");
-        idt.wln("let mut tmp = unsafe { std::mem::MaybeUninit::uninit().assume_init() };");
+        idt.wln(&format!(
+            "let mut tmp = <{name} as bytemuck::Zeroable>::zeroed();"
+        ));
         idt.wln("reader.read_exact(bytemuck::bytes_of_mut(&mut tmp))?;");
         idt.wln("Ok(tmp)");
         Ok(())

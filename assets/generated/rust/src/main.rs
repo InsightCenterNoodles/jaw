@@ -385,7 +385,7 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
                     &format!("ComplexSeq.flags.another_thing at {}", i),
                 );
                 demand(
-                    as_.flags.some_stuff().unwrap() == es.flags.some_stuff().unwrap(),
+                    as_.flags.some_stuff() == es.flags.some_stuff(),
                     &format!("ComplexSeq.flags.some_stuff at {}", i),
                 );
                 for (j, (x, y)) in as_.list.0.iter().zip(es.list.0.iter()).enumerate() {
@@ -477,11 +477,12 @@ fn main() -> io::Result<()> {
     compare_expected_actual(&make_expected(), &actual);
     println!("All checks passed ({} messages)", expected.len());
 
-    // Extra self-checks for DSL features not representable via Root
+    // Extra self-check: raw enum values are preserved and validated on demand.
     {
         let mut r = Cursor::new(vec![2u8]);
         let got = BetterEnum::jaw_read(&mut r)?;
-        demand(got == BetterEnum::DEFAULT, "BetterEnum default");
+        demand(got.raw() == 2, "BetterEnum raw value");
+        demand(got.value().is_err(), "BetterEnum unknown value conversion");
     }
 
     if let Some(path) = dump_path {

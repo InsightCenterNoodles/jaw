@@ -101,7 +101,7 @@ fn intermediate() {
     match &m[&quick_typename("PlainEnum")].kind {
         TypeKind::Enum(e) => {
             assert_eq!(e.ty.as_str(), "u8");
-            assert!(e.default.is_none());
+            assert!(e.reserved.is_empty());
             assert_eq!(enum_sig(&e.members), vec![("F1", 0), ("F2", 1)]);
         }
         other => panic!("PlainEnum parsed as unexpected kind: {:?}", other),
@@ -110,11 +110,14 @@ fn intermediate() {
     match &m[&quick_typename("BetterEnum")].kind {
         TypeKind::Enum(e) => {
             assert_eq!(e.ty.as_str(), "u8");
-            assert_eq!(
-                e.default.as_ref().map(|d| (d.name.as_str(), d.value)),
-                Some(("DEFAULT", 255))
-            );
             assert_eq!(enum_sig(&e.members), vec![("A", 0), ("B", 1)]);
+            assert_eq!(
+                e.reserved
+                    .iter()
+                    .map(|r| (r.start, r.end))
+                    .collect::<Vec<_>>(),
+                vec![(2, 255)]
+            );
         }
         other => panic!("BetterEnum parsed as unexpected kind: {:?}", other),
     }
@@ -237,7 +240,7 @@ variant Bad : u8
         panic!("unexpected error kind: {err:?}");
     };
     assert!(
-        reason.contains("do not support default"),
+        reason.contains("default members"),
         "unexpected error: {reason}"
     );
 }
@@ -340,26 +343,53 @@ seq Root
     }
 }
 
-/// Test: enum declarations can carry exactly one default member.
+/// Test: enum default members are no longer accepted.
 #[test]
-fn enum_default_is_parsed() {
+fn enum_default_is_rejected() {
     let source = r#"
 enum Mode : u8
 > Unknown = 255
 - Ready = 1
 "#;
 
+    assert_malformed_member(source, "default members are no longer supported");
+}
+
+#[test]
+fn enum_and_variant_reservations_are_parsed() {
+    let source = r#"
+enum Mode : u8
+- READY = 1
+- reserve 2
+- reserve 20..=23
+
+variant Message : u8
+- 1 => void
+- reserve 7..=9
+"#;
     let module = Module::from_string("file".into(), source.into()).expect("parse module");
-    match &module.definitions[0].kind {
-        TypeKind::Enum(enm) => {
-            assert_eq!(
-                enm.default.as_ref().map(|d| (d.name.as_str(), d.value)),
-                Some(("Unknown", 255))
-            );
-            assert_eq!(enum_sig(&enm.members), vec![("Ready", 1)]);
-        }
-        other => panic!("Mode parsed as unexpected kind: {:?}", other),
-    }
+
+    let TypeKind::Enum(enm) = &module.definitions[0].kind else {
+        panic!("expected enum");
+    };
+    assert_eq!(
+        enm.reserved
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect::<Vec<_>>(),
+        vec![(2, 2), (20, 23)]
+    );
+
+    let TypeKind::Variant(var) = &module.definitions[1].kind else {
+        panic!("expected variant");
+    };
+    assert_eq!(
+        var.reserved
+            .iter()
+            .map(|r| (r.start, r.end))
+            .collect::<Vec<_>>(),
+        vec![(7, 9)]
+    );
 }
 
 /// Test: declarations that require a `: ...` detail reject missing detail.
@@ -424,7 +454,7 @@ fn member_numbers_must_parse() {
     }
 }
 
-/// Test: only enums support default members, and only one default is allowed.
+/// Test: no declaration supports default members.
 #[test]
 fn default_member_rules_are_enforced() {
     assert_malformed_member(
@@ -440,16 +470,10 @@ fn default_member_rules_are_enforced() {
         "bitfield declarations do not support default members",
     );
 
-    let err = parse_err(
-        r#"
-enum Bad : u8
-> A = 0
-> B = 1
-"#,
+    assert_malformed_member(
+        "enum Bad : u8\n> A = 0\n",
+        "default members are no longer supported",
     );
-    let IntermediateError::DuplicateDefault { .. } = err else {
-        panic!("unexpected error kind: {err:?}");
-    };
 }
 
 /// Test: type names may contain only alphanumeric characters and underscores.

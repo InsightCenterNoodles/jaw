@@ -83,7 +83,7 @@ pub(super) fn convert(
                 .lookup(&enm.ty)
                 .with_context(|| format!("while resolving enum base type for {}", ty.ident))?,
             members: enm.members,
-            default: enm.default,
+            reserved: enm.reserved,
         }),
         intermediate::TypeKind::Bitfld(bitfld) => TypeKind::Bitfld(Bitfld {
             underlying: state
@@ -137,6 +137,7 @@ pub(super) fn convert(
                     .into_iter()
                     .map(convert_member)
                     .collect::<anyhow::Result<Vec<_>>>()?,
+                reserved: variant.reserved,
             })
         }
         intermediate::TypeKind::Sequence(sequence) => TypeKind::Sequence(Sequence {

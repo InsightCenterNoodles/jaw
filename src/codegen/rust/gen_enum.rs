@@ -15,50 +15,82 @@ pub fn emit_enum(
     _ty: &Type,
     kind: &Enum,
 ) -> Result<()> {
-    // Enums only have one form
     let name = ctx.name_of(id);
+    let value_name = format!("{name}Value");
     let base = ctx.name_of(kind.underlying);
+
+    out.wln("#[repr(transparent)]");
+    out.wln("#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]");
+    out.wln(&format!("pub struct {name}({base});"));
+    out.wln(&format!("unsafe impl bytemuck::Zeroable for {name} {{}}"));
+    out.wln(&format!("unsafe impl bytemuck::Pod for {name} {{}}"));
+    out.newline();
+
     out.wln(&format!("#[repr({base})]"));
     out.wln("#[derive(Debug, Clone, Copy, PartialEq, Eq)]");
-    out.wln(&format!("pub enum {name}"));
+    out.wln(&format!("pub enum {value_name}"));
     {
-        let mut idt = out.indent();
-        for m in &kind.members {
-            idt.wln(&format!("{} = {},", m.name, m.value));
-        }
-        if let Some(default) = &kind.default {
-            idt.wln(&format!("{} = {},", default.name, default.value));
+        let mut body = out.indent();
+        for member in &kind.members {
+            body.wln(&format!("{} = {},", member.name, member.value));
         }
     }
     out.newline();
 
-    //
-
-    let base_read = read_expr(ctx, kind.underlying);
-
-    emit_jread(&name, None, out, |idt| {
-        idt.wln(&format!("let raw = {base_read};"));
-        idt.wln("match raw");
+    out.wln(&format!("impl {name}"));
+    {
+        let mut body = out.indent();
+        for member in &kind.members {
+            body.wln(&format!(
+                "pub const {}: Self = Self({});",
+                member.name, member.value
+            ));
+        }
+        body.wln(&format!(
+            "pub const fn from_raw(raw: {base}) -> Self {{ Self(raw) }}"
+        ));
+        body.wln(&format!("pub const fn raw(self) -> {base} {{ self.0 }}"));
+        body.wln(&format!(
+            "pub fn value(self) -> std::io::Result<{value_name}>"
+        ));
         {
-            let mut mtch = idt.indent();
-            for m in &kind.members {
-                mtch.wln(&format!("{} => Ok({}::{}),", m.value, name, m.name));
-            }
-            if let Some(default) = &kind.default {
-                mtch.wln(&format!("_ => Ok({}::{}),", name, default.name));
-            } else {
-                mtch.wln(&format!(
-                    "_ => Err(invalid_data(format!(\"invalid discriminant for {name}: {{raw}}\"))),"
+            let mut value_body = body.indent();
+            value_body.wln("match self.0");
+            {
+                let mut arms = value_body.indent();
+                for member in &kind.members {
+                    arms.wln(&format!(
+                        "{} => Ok({value_name}::{}),",
+                        member.value, member.name
+                    ));
+                }
+                arms.wln(&format!(
+                    "raw => Err(invalid_data(format!(\"invalid value for {name}: {{raw}}\"))),"
                 ));
             }
         }
+    }
+    out.newline();
+
+    out.wln(&format!("impl From<{value_name}> for {name}"));
+    {
+        let mut body = out.indent();
+        body.wln(&format!("fn from(value: {value_name}) -> Self"));
+        {
+            let mut function = body.indent();
+            function.wln(&format!("Self(value as {base})"));
+        }
+    }
+    out.newline();
+
+    emit_jread(&name, None, out, |body| {
+        body.wln(&format!("Ok(Self({}))", read_expr(ctx, kind.underlying)));
         Ok(())
     })?;
 
-    emit_jwrite(&name, None, out, |idt| {
-        idt.wln(&format!("let raw : {base} = *self as _;"));
-        idt.wln(&format!("{};", write_expr("raw")));
-        idt.wln("Ok(())");
+    emit_jwrite(&name, None, out, |body| {
+        body.wln(&format!("{};", write_expr("self.0")));
+        body.wln("Ok(())");
         Ok(())
     })?;
 

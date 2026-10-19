@@ -206,11 +206,14 @@ def main() -> None:
     data = encode_all(expected)
     actual = decode_all(data, len(expected))
     compare_expected_actual(expected, actual)
-    # Extra self-checks for DSL features not representable via Root
-    demand(
-        example.read_BetterEnum(example.Reader(bytes([2]))) == example.BetterEnum.DEFAULT,
-        "BetterEnum default",
-    )
+    # Extra self-check: raw enum values are preserved and validated on demand.
+    unknown = example.read_BetterEnum(example.Reader(bytes([2])))
+    demand(unknown.raw == 2, "BetterEnum raw value")
+    try:
+        unknown.value()
+        demand(False, "BetterEnum unknown value should fail conversion")
+    except ValueError:
+        pass
     
     print(f"All checks passed ({len(expected)} messages)")
     if args.dump:

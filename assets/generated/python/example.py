@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import Iterable
 from typing import ClassVar
 
+if sys.byteorder != 'little':
+    raise RuntimeError('jaw only supports little-endian hosts')
+
 class Reader:
     def __init__(self, data):
         self._buf = memoryview(data)
@@ -84,7 +87,6 @@ def _read_primitive_array(reader, fmt, typecode, count):
     raw = reader.read_bytes(count * size)
     arr = array.array(typecode)
     arr.frombytes(raw)
-    if sys.byteorder != 'little' and arr.itemsize > 1: arr.byteswap()
     return arr
 
 def _write_primitive_array(writer, fmt, typecode, values: Iterable):
@@ -92,10 +94,9 @@ def _write_primitive_array(writer, fmt, typecode, values: Iterable):
         arr = values
     else:
         arr = array.array(typecode, values)
-    if sys.byteorder != 'little' and arr.itemsize > 1:
-        arr = arr[:]
-        arr.byteswap()
     writer.write_bytes(arr.tobytes())
+
+MY_CONST : int = 100
 
 @dataclass
 class MyPOD:
@@ -107,19 +108,35 @@ class MyOtherPOD:
     first: MyPOD
     second: array.array
 
-Alpha = MyOtherPOD
-
 @enum.unique
-class PlainEnum(enum.IntEnum):
+class PlainEnumValue(enum.IntEnum):
     F1 = 0
     F2 = 1
 
+@dataclass(frozen=True)
+class PlainEnum:
+    raw: int
+    def __int__(self):
+        return self.raw
+    def value(self) -> PlainEnumValue:
+        return PlainEnumValue(self.raw)
+PlainEnum.F1 = PlainEnum(0)
+PlainEnum.F2 = PlainEnum(1)
+
 @enum.unique
-class BetterEnum(enum.IntEnum):
+class BetterEnumValue(enum.IntEnum):
     A = 0
     B = 1
-    DEFAULT = 255
-    __default__ = DEFAULT
+
+@dataclass(frozen=True)
+class BetterEnum:
+    raw: int
+    def __int__(self):
+        return self.raw
+    def value(self) -> BetterEnumValue:
+        return BetterEnumValue(self.raw)
+BetterEnum.A = BetterEnum(0)
+BetterEnum.B = BetterEnum(1)
 
 @dataclass
 class MyFlags:
@@ -130,6 +147,12 @@ class MyFlags:
 @dataclass
 class SmallSeq:
     list: array.array
+
+@dataclass
+class ComplexSeq:
+    flags: MyFlags
+    list: list
+    other_list: list
 
 @dataclass
 class MyVariant:
@@ -147,6 +170,9 @@ class MyVariant:
     @staticmethod
     def make_SmallSeq_4(value: SmallSeq):
         return MyVariant(4, value)
+    @staticmethod
+    def make_ComplexSeq_5(value: ComplexSeq):
+        return MyVariant(5, value)
     type_MyPOD_1: ClassVar[int] = 1
     def is_MyPOD_1(self):
         return self.tag == self.type_MyPOD_1
@@ -159,6 +185,9 @@ class MyVariant:
     type_SmallSeq_4: ClassVar[int] = 4
     def is_SmallSeq_4(self):
         return self.tag == self.type_SmallSeq_4
+    type_ComplexSeq_5: ClassVar[int] = 5
+    def is_ComplexSeq_5(self):
+        return self.tag == self.type_ComplexSeq_5
 
 @dataclass
 class Root:
@@ -170,100 +199,131 @@ def read_MyPOD(reader):
         a_thing = reader.read_u8(),
         b_thing = reader.read_u64(),
     )
-    
+
 def write_MyPOD(writer, value):
     writer.write_u8(value.a_thing)
     writer.write_u64(value.b_thing)
-    
+
 def read_FixedString(reader):
     return _read_primitive_array(reader, '<B', 'B', 4)
-    
+
 def write_FixedString(writer, values):
     if len(values) != 4: raise ValueError('expected 4 items')
     _write_primitive_array(writer, '<B', 'B', values)
-    
+
 def read_ShortString(reader):
     count = reader.read_u8()
+    count = int(count)
+    if count < 0: raise ValueError('negative array length')
     return _read_primitive_array(reader, '<B', 'B', count)
-    
+
 def write_ShortString(writer, values):
+    # Fail instead of truncating if the list does not fit in the count type.
     if len(values) > 255: raise ValueError('array length too large to encode')
     writer.write_u8(len(values))
     _write_primitive_array(writer, '<B', 'B', values)
-    
+
 def read_Data(reader):
     count = reader.read_u8()
+    count = int(count)
+    if count < 0: raise ValueError('negative array length')
     return _read_primitive_array(reader, '<f', 'f', count)
-    
+
 def write_Data(writer, values):
+    # Fail instead of truncating if the list does not fit in the count type.
     if len(values) > 255: raise ValueError('array length too large to encode')
     writer.write_u8(len(values))
     _write_primitive_array(writer, '<f', 'f', values)
-    
+
 def read_MyOtherPOD(reader):
     return MyOtherPOD(
         first = read_MyPOD(reader),
         second = read_FixedString(reader),
     )
-    
+
 def write_MyOtherPOD(writer, value):
     write_MyPOD(writer, value.first)
     write_FixedString(writer, value.second)
-    
-def read_Alpha(reader):
-    return read_MyOtherPOD(reader)
-    
-def write_Alpha(writer, value):
-    write_MyOtherPOD(writer, value)
-    
+
 def read_PlainEnum(reader):
     raw = reader.read_u8()
-    if raw in PlainEnum._value2member_map_:
-        return PlainEnum(raw)
-    raise ValueError(f'invalid discriminant for PlainEnum: {raw!r}')
-    
+    return PlainEnum(raw)
+
 def write_PlainEnum(writer, value):
-    writer.write_u8(int(value))
-    
+    writer.write_u8(value.raw)
+
 def read_BetterEnum(reader):
     raw = reader.read_u8()
-    if raw in BetterEnum._value2member_map_:
-        return BetterEnum(raw)
-    return BetterEnum.DEFAULT
-    
+    return BetterEnum(raw)
+
 def write_BetterEnum(writer, value):
-    writer.write_u8(int(value))
-    
+    writer.write_u8(value.raw)
+
 def read_MyFlags(reader):
     raw = reader.read_u8()
     is_thing = int((raw >> 0) & 0x1)
     another_thing = int((raw >> 1) & 0x3)
-    some_stuff_raw = int((raw >> 3) & 0x3)
-    if some_stuff_raw in PlainEnum._value2member_map_:
-        some_stuff = PlainEnum(some_stuff_raw)
-    else:
-        raise ValueError(f'invalid discriminant for PlainEnum in bitfield: {some_stuff_raw!r}')
+    some_stuff = PlainEnum(int((raw >> 3) & 0x3))
     return MyFlags(
         is_thing = is_thing,
         another_thing = another_thing,
         some_stuff = some_stuff,
     )
-    
+
 def write_MyFlags(writer, value):
     raw = 0
     raw |= (int(value.is_thing) & 0x1) << 0
     raw |= (int(value.another_thing) & 0x3) << 1
     raw |= (int(value.some_stuff) & 0x3) << 3
     writer.write_u8(raw)
-    
+
 def read_SmallSeq(reader):
     return SmallSeq(
         list = read_Data(reader),
     )
-    
+
 def write_SmallSeq(writer, value):
     write_Data(writer, value.list)
-    
+
+def read_MyPODFixedList(reader):
+    out = []
+    for _ in range(8):
+        out.append(read_MyPOD(reader))
+    return out
+
+def write_MyPODFixedList(writer, values):
+    if len(values) != 8: raise ValueError('expected 8 items')
+    for item in values:
+        write_MyPOD(writer, item)
+
+def read_MyOtherPODDynList(reader):
+    count = reader.read_u16()
+    count = int(count)
+    if count < 0: raise ValueError('negative array length')
+    out = []
+    for _ in range(int(count)):
+        out.append(read_MyOtherPOD(reader))
+    return out
+
+def write_MyOtherPODDynList(writer, values):
+    # Fail instead of truncating if the list does not fit in the count type.
+    if len(values) > 65535: raise ValueError('array length too large to encode')
+    writer.write_u16(len(values))
+    for item in values:
+        write_MyOtherPOD(writer, item)
+
+def read_ComplexSeq(reader):
+    return ComplexSeq(
+        flags = read_MyFlags(reader),
+        list = read_MyPODFixedList(reader),
+        other_list = read_MyOtherPODDynList(reader),
+    )
+
+def write_ComplexSeq(writer, value):
+    write_MyFlags(writer, value.flags)
+    write_MyPODFixedList(writer, value.list)
+    write_MyOtherPODDynList(writer, value.other_list)
+
 def read_MyVariant(reader):
     tag = reader.read_u8()
     if tag == 1:
@@ -277,8 +337,11 @@ def read_MyVariant(reader):
     if tag == 4:
         val = read_SmallSeq(reader)
         return MyVariant(tag=tag, value=val)
+    if tag == 5:
+        val = read_ComplexSeq(reader)
+        return MyVariant(tag=tag, value=val)
     raise ValueError(f'unknown tag for MyVariant: {tag!r}')
-    
+
 def write_MyVariant(writer, value):
     writer.write_u8(int(value.tag))
     if int(value.tag) == 1:
@@ -292,15 +355,18 @@ def write_MyVariant(writer, value):
     if int(value.tag) == 4:
         write_SmallSeq(writer, value.value)
         return
+    if int(value.tag) == 5:
+        write_ComplexSeq(writer, value.value)
+        return
     raise ValueError(f'unknown tag for MyVariant: {value.tag!r}')
-    
+
 def read_Root(reader):
     return Root(
         name = read_ShortString(reader),
         var = read_MyVariant(reader),
     )
-    
+
 def write_Root(writer, value):
     write_ShortString(writer, value.name)
     write_MyVariant(writer, value.var)
-    
+
