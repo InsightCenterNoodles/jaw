@@ -11,17 +11,28 @@ from typing import ClassVar
 if sys.byteorder != 'little':
     raise RuntimeError('jaw only supports little-endian hosts')
 
+_U8 = struct.Struct('<B')
+_I8 = struct.Struct('<b')
+_U16 = struct.Struct('<H')
+_I16 = struct.Struct('<h')
+_U32 = struct.Struct('<I')
+_I32 = struct.Struct('<i')
+_U64 = struct.Struct('<Q')
+_I64 = struct.Struct('<q')
+_F32 = struct.Struct('<f')
+_F64 = struct.Struct('<d')
+_DATACLASS_SLOTS = {'slots': True} if sys.version_info >= (3, 10) else {}
+
 class Reader:
     def __init__(self, data):
         self._buf = memoryview(data)
         self._pos = 0
-    def _read_prim(self, fmt):
-        size = struct.calcsize(fmt)
-        end = self._pos + size
+    def _read_struct(self, codec):
+        end = self._pos + codec.size
         if end > len(self._buf): raise EOFError('not enough data')
-        (value,) = struct.unpack_from(fmt, self._buf, self._pos)
+        values = codec.unpack_from(self._buf, self._pos)
         self._pos = end
-        return value
+        return values
     def read_bytes(self, n):
         n = int(n)
         start = self._pos
@@ -30,25 +41,65 @@ class Reader:
         self._pos = end
         return self._buf[start:end]
     def read_u8(self):
-        return self._read_prim('<B')
+        end = self._pos + _U8.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _U8.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_i8(self):
-        return self._read_prim('<b')
+        end = self._pos + _I8.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _I8.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_u16(self):
-        return self._read_prim('<H')
+        end = self._pos + _U16.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _U16.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_i16(self):
-        return self._read_prim('<h')
+        end = self._pos + _I16.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _I16.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_u32(self):
-        return self._read_prim('<I')
+        end = self._pos + _U32.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _U32.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_i32(self):
-        return self._read_prim('<i')
+        end = self._pos + _I32.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _I32.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_u64(self):
-        return self._read_prim('<Q')
+        end = self._pos + _U64.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _U64.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_i64(self):
-        return self._read_prim('<q')
+        end = self._pos + _I64.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _I64.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_f32(self):
-        return self._read_prim('<f')
+        end = self._pos + _F32.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _F32.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
     def read_f64(self):
-        return self._read_prim('<d')
+        end = self._pos + _F64.size
+        if end > len(self._buf): raise EOFError('not enough data')
+        (value,) = _F64.unpack_from(self._buf, self._pos)
+        self._pos = end
+        return value
 
 class Writer:
     def __init__(self):
@@ -57,53 +108,53 @@ class Writer:
         return bytes(self._out)
     def write_bytes(self, b):
         self._out.extend(b)
-    def _write_prim(self, fmt, value):
-        self._out.extend(struct.pack(fmt, value))
+    def _write_struct(self, codec, *values):
+        self._out.extend(codec.pack(*values))
     def write_u8(self, value):
-        self._write_prim('<B', value)
+        self._out.extend(_U8.pack(value))
     def write_i8(self, value):
-        self._write_prim('<b', value)
+        self._out.extend(_I8.pack(value))
     def write_u16(self, value):
-        self._write_prim('<H', value)
+        self._out.extend(_U16.pack(value))
     def write_i16(self, value):
-        self._write_prim('<h', value)
+        self._out.extend(_I16.pack(value))
     def write_u32(self, value):
-        self._write_prim('<I', value)
+        self._out.extend(_U32.pack(value))
     def write_i32(self, value):
-        self._write_prim('<i', value)
+        self._out.extend(_I32.pack(value))
     def write_u64(self, value):
-        self._write_prim('<Q', value)
+        self._out.extend(_U64.pack(value))
     def write_i64(self, value):
-        self._write_prim('<q', value)
+        self._out.extend(_I64.pack(value))
     def write_f32(self, value):
-        self._write_prim('<f', value)
+        self._out.extend(_F32.pack(value))
     def write_f64(self, value):
-        self._write_prim('<d', value)
+        self._out.extend(_F64.pack(value))
 
-def _read_primitive_array(reader, fmt, typecode, count):
+def _read_primitive_array(reader, codec, typecode, count):
     count = int(count)
     if count < 0: raise ValueError('negative array length')
-    size = struct.calcsize(fmt)
+    size = codec.size
     raw = reader.read_bytes(count * size)
     arr = array.array(typecode)
     arr.frombytes(raw)
     return arr
 
-def _write_primitive_array(writer, fmt, typecode, values: Iterable):
+def _write_primitive_array(writer, typecode, values: Iterable):
     if isinstance(values, array.array) and values.typecode == typecode:
         arr = values
     else:
         arr = array.array(typecode, values)
-    writer.write_bytes(arr.tobytes())
+    writer.write_bytes(memoryview(arr).cast('B'))
 
 MY_CONST : int = 100
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class MyPOD:
     a_thing: int
     b_thing: int
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class MyOtherPOD:
     first: MyPOD
     second: array.array
@@ -113,7 +164,7 @@ class PlainEnumValue(enum.IntEnum):
     F1 = 0
     F2 = 1
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class PlainEnum:
     raw: int
     def __int__(self):
@@ -128,7 +179,7 @@ class BetterEnumValue(enum.IntEnum):
     A = 0
     B = 1
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_DATACLASS_SLOTS)
 class BetterEnum:
     raw: int
     def __int__(self):
@@ -138,23 +189,23 @@ class BetterEnum:
 BetterEnum.A = BetterEnum(0)
 BetterEnum.B = BetterEnum(1)
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class MyFlags:
     is_thing: int
     another_thing: int
     some_stuff: PlainEnum
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class SmallSeq:
     list: array.array
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class ComplexSeq:
     flags: MyFlags
     list: list
     other_list: list
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class MyVariant:
     tag: int = 0
     value: object = None
@@ -189,61 +240,90 @@ class MyVariant:
     def is_ComplexSeq_5(self):
         return self.tag == self.type_ComplexSeq_5
 
-@dataclass
+@dataclass(**_DATACLASS_SLOTS)
 class Root:
     name: array.array
     var: MyVariant
 
-def read_MyPOD(reader):
+_MyPOD_STRUCT = struct.Struct('<BQ')
+def _decode_MyPOD(values):
     return MyPOD(
-        a_thing = reader.read_u8(),
-        b_thing = reader.read_u64(),
+        a_thing=next(values),
+        b_thing=next(values),
     )
+def _encode_MyPOD(value, values):
+    values.append(value.a_thing)
+    values.append(value.b_thing)
+
+_MyOtherPOD_STRUCT = struct.Struct('<BQBBBB')
+def _decode_MyOtherPOD(values):
+    return MyOtherPOD(
+        first=_decode_MyPOD(values),
+        second=array.array('B', (next(values) for _ in range(4))),
+    )
+def _encode_MyOtherPOD(value, values):
+    _encode_MyPOD(value.first, values)
+    for _item_0 in value.second:
+        values.append(_item_0)
+
+def _decode_MyFlags(values):
+    raw = next(values)
+    return MyFlags(
+        is_thing=int((raw >> 0) & 0x1),
+        another_thing=int((raw >> 1) & 0x3),
+        some_stuff=PlainEnum(int((raw >> 3) & 0x3)),
+    )
+def _encode_MyFlags(value, values):
+    values.append(((int(value.is_thing) & 0x1) << 0) | ((int(value.another_thing) & 0x3) << 1) | ((int(value.some_stuff) & 0x3) << 3))
+
+def read_MyPOD(reader):
+    values = iter(reader._read_struct(_MyPOD_STRUCT))
+    return _decode_MyPOD(values)
 
 def write_MyPOD(writer, value):
-    writer.write_u8(value.a_thing)
-    writer.write_u64(value.b_thing)
+    values = []
+    _encode_MyPOD(value, values)
+    writer._write_struct(_MyPOD_STRUCT, *values)
 
 def read_FixedString(reader):
-    return _read_primitive_array(reader, '<B', 'B', 4)
+    return _read_primitive_array(reader, _U8, 'B', 4)
 
 def write_FixedString(writer, values):
     if len(values) != 4: raise ValueError('expected 4 items')
-    _write_primitive_array(writer, '<B', 'B', values)
+    _write_primitive_array(writer, 'B', values)
 
 def read_ShortString(reader):
     count = reader.read_u8()
     count = int(count)
     if count < 0: raise ValueError('negative array length')
-    return _read_primitive_array(reader, '<B', 'B', count)
+    return _read_primitive_array(reader, _U8, 'B', count)
 
 def write_ShortString(writer, values):
     # Fail instead of truncating if the list does not fit in the count type.
     if len(values) > 255: raise ValueError('array length too large to encode')
     writer.write_u8(len(values))
-    _write_primitive_array(writer, '<B', 'B', values)
+    _write_primitive_array(writer, 'B', values)
 
 def read_Data(reader):
     count = reader.read_u8()
     count = int(count)
     if count < 0: raise ValueError('negative array length')
-    return _read_primitive_array(reader, '<f', 'f', count)
+    return _read_primitive_array(reader, _F32, 'f', count)
 
 def write_Data(writer, values):
     # Fail instead of truncating if the list does not fit in the count type.
     if len(values) > 255: raise ValueError('array length too large to encode')
     writer.write_u8(len(values))
-    _write_primitive_array(writer, '<f', 'f', values)
+    _write_primitive_array(writer, 'f', values)
 
 def read_MyOtherPOD(reader):
-    return MyOtherPOD(
-        first = read_MyPOD(reader),
-        second = read_FixedString(reader),
-    )
+    values = iter(reader._read_struct(_MyOtherPOD_STRUCT))
+    return _decode_MyOtherPOD(values)
 
 def write_MyOtherPOD(writer, value):
-    write_MyPOD(writer, value.first)
-    write_FixedString(writer, value.second)
+    values = []
+    _encode_MyOtherPOD(value, values)
+    writer._write_struct(_MyOtherPOD_STRUCT, *values)
 
 def read_PlainEnum(reader):
     raw = reader.read_u8()

@@ -731,7 +731,9 @@ fn emit_read_impl(
                             } else {
                                 body.wln(&format!("{} payload{{}};", target_ty));
                                 body.wln("if (!read_value(reader, payload)) return false;");
-                                body.wln(&format!("value.emplace<{variant_index}>(payload);"));
+                                body.wln(&format!(
+                                    "value.emplace<{variant_index}>(std::move(payload));"
+                                ));
                                 body.wln("return true;");
                             }
                         }
@@ -967,12 +969,16 @@ fn emit_write_impl(
                     size_ty, size_ty
                 ));
                 idt.wln("if (!write_scalar(writer, count_raw)) return false;");
-                idt.wln("for (auto const& elem : value)");
-                {
-                    let mut body = idt.indent();
-                    body.wln("if (!write_value(writer, elem)) return false;");
+                if ctx.can_bulk_array(id) {
+                    idt.wln("return write_bytes(writer, value.data(), value.size_bytes());");
+                } else {
+                    idt.wln("for (auto const& elem : value)");
+                    {
+                        let mut body = idt.indent();
+                        body.wln("if (!write_value(writer, elem)) return false;");
+                    }
+                    idt.wln("return true;");
                 }
-                idt.wln("return true;");
             }
         }
         TypeKind::FixedArray(arr) => {
@@ -983,12 +989,16 @@ fn emit_write_impl(
             ));
             {
                 let mut idt = out.indent();
-                idt.wln("for (auto const& elem : value)");
-                {
-                    let mut body = idt.indent();
-                    body.wln("if (!write_value(writer, elem)) return false;");
+                if ctx.can_bulk_array(id) {
+                    idt.wln("return write_bytes(writer, value.data(), sizeof(value));");
+                } else {
+                    idt.wln("for (auto const& elem : value)");
+                    {
+                        let mut body = idt.indent();
+                        body.wln("if (!write_value(writer, elem)) return false;");
+                    }
+                    idt.wln("return true;");
                 }
-                idt.wln("return true;");
             }
         }
         TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}

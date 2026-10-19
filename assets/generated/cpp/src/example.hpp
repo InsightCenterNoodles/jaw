@@ -461,14 +461,14 @@ namespace example {
                 {
                     MyPODReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<0>(payload);
+                    value.emplace<0>(std::move(payload));
                     return true;
                 }
                 case 2:
                 {
                     MyOtherPODReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<1>(payload);
+                    value.emplace<1>(std::move(payload));
                     return true;
                 }
                 case 3:
@@ -480,14 +480,14 @@ namespace example {
                 {
                     SmallSeqReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<3>(payload);
+                    value.emplace<3>(std::move(payload));
                     return true;
                 }
                 case 5:
                 {
                     ComplexSeqReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<4>(payload);
+                    value.emplace<4>(std::move(payload));
                     return true;
                 }
                 default: return false;
@@ -687,11 +687,7 @@ namespace example {
         }
         template <class Writer> inline bool write(Writer& writer, FixedStringWriter const& value)
         {
-            for (auto const& elem : value)
-            {
-                if (!write_value(writer, elem)) return false;
-            }
-            return true;
+            return write_bytes(writer, value.data(), sizeof(value));
         }
         template <class Writer> inline bool write(Writer& writer, ShortStringWriter const& value)
         {
@@ -699,11 +695,7 @@ namespace example {
             if (count > static_cast<size_t>(std::numeric_limits<uint8_t>::max())) return false;
             std::uint8_t count_raw = static_cast<std::uint8_t>(count);
             if (!write_scalar(writer, count_raw)) return false;
-            for (auto const& elem : value)
-            {
-                if (!write_value(writer, elem)) return false;
-            }
-            return true;
+            return write_bytes(writer, value.data(), value.size_bytes());
         }
         template <class Writer> inline bool write(Writer& writer, DataWriter const& value)
         {
@@ -711,11 +703,7 @@ namespace example {
             if (count > static_cast<size_t>(std::numeric_limits<uint8_t>::max())) return false;
             std::uint8_t count_raw = static_cast<std::uint8_t>(count);
             if (!write_scalar(writer, count_raw)) return false;
-            for (auto const& elem : value)
-            {
-                if (!write_value(writer, elem)) return false;
-            }
-            return true;
+            return write_bytes(writer, value.data(), value.size_bytes());
         }
         template <class Writer> inline bool write(Writer& writer, MyOtherPODWriter const& value)
         {
@@ -740,11 +728,7 @@ namespace example {
         }
         template <class Writer> inline bool write(Writer& writer, MyPODFixedListWriter const& value)
         {
-            for (auto const& elem : value)
-            {
-                if (!write_value(writer, elem)) return false;
-            }
-            return true;
+            return write_bytes(writer, value.data(), sizeof(value));
         }
         template <class Writer> inline bool write(Writer& writer, MyOtherPODDynListWriter const& value)
         {
@@ -752,11 +736,7 @@ namespace example {
             if (count > static_cast<size_t>(std::numeric_limits<uint16_t>::max())) return false;
             std::uint16_t count_raw = static_cast<std::uint16_t>(count);
             if (!write_scalar(writer, count_raw)) return false;
-            for (auto const& elem : value)
-            {
-                if (!write_value(writer, elem)) return false;
-            }
-            return true;
+            return write_bytes(writer, value.data(), value.size_bytes());
         }
         template <class Writer> inline bool write(Writer& writer, ComplexSeqWriter const& value)
         {

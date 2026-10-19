@@ -91,6 +91,8 @@ fn reader(
 
         match ctx.can_bulk_array(id) {
             Some(TypeKind::Primitive(x)) if x.is_u8() => {
+                // Stable `Read::read_exact` requires an initialized byte slice. Avoid
+                // `MaybeUninit` here until `read_buf_exact` is available on stable Rust.
                 idt.wln("let mut out = vec![Default::default(); count];");
                 idt.wln("reader.read_exact(&mut out)?;");
 
@@ -172,7 +174,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
             ctx.name_of(arr.size_type)
         ));
         idt.wln(&format!("{};", write_expr("count")));
-        if ctx.direct_primitive(arr.value_type).is_some() {
+        if ctx.can_bulk_array(id).is_some() {
             idt.wln("writer.write_all(bytemuck::cast_slice(&self.0))?;");
         } else {
             idt.wln("for v in &self.0");
@@ -201,7 +203,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &DynamicArray
             ctx.name_of(arr.size_type)
         ));
         idt.wln(&format!("{};", write_expr("count")));
-        if ctx.direct_primitive(arr.value_type).is_some() {
+        if ctx.can_bulk_array(id).is_some() {
             idt.wln("writer.write_all(bytemuck::cast_slice(self.0))?;");
         } else {
             idt.wln("for v in self.0");

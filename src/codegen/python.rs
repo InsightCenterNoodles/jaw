@@ -20,10 +20,179 @@ pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> Result<
     }
 
     for (id, ty) in ctx.types() {
+        emit_pod_helpers(&ctx, out, id, ty)?;
+    }
+
+    for (id, ty) in ctx.types() {
         emit_read_impl(&ctx, out, id, ty)?;
         emit_write_impl(&ctx, out, id, ty)?;
     }
 
+    Ok(())
+}
+
+/// Emits a cached `struct.Struct` and flatten/unflatten helpers for POD packs.
+fn emit_pod_helpers(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
+    let name = ctx.name_of(id);
+    match &ty.kind {
+        TypeKind::Pack(pack) => {
+            let format = pod_struct_format(ctx, id)?;
+            out.wln(&format!("_{name}_STRUCT = struct.Struct('<{format}')"));
+            out.wln(&format!("def _decode_{name}(values):"));
+            {
+                let mut body = out.indent();
+                body.wln(&format!("return {name}("));
+                {
+                    let mut args = body.indent();
+                    for member in &pack.members {
+                        let expr = pod_decode_expr(ctx, member.ty, "values")?;
+                        args.wln(&format!("{}={expr},", sanitize(&member.name)));
+                    }
+                }
+                body.wln(")");
+            }
+            out.wln(&format!("def _encode_{name}(value, values):"));
+            {
+                let mut body = out.indent();
+                for member in &pack.members {
+                    emit_pod_encode(
+                        ctx,
+                        &mut body,
+                        member.ty,
+                        &format!("value.{}", sanitize(&member.name)),
+                        "values",
+                        0,
+                    )?;
+                }
+            }
+            out.newline();
+        }
+        TypeKind::Bitfld(bitfield) => {
+            out.wln(&format!("def _decode_{name}(values):"));
+            {
+                let mut body = out.indent();
+                body.wln("raw = next(values)");
+                body.wln(&format!("return {name}("));
+                {
+                    let mut args = body.indent();
+                    for member in &bitfield.members {
+                        let start = member.range.start();
+                        let width = member.range.end() - start + 1;
+                        let mask = (1u128 << width) - 1;
+                        let raw = format!("(raw >> {start}) & 0x{mask:X}");
+                        let expr = match &ctx.world.lookup(member.underlying).kind {
+                            TypeKind::Enum(_) => {
+                                format!("{}(int({raw}))", ctx.name_of(member.underlying))
+                            }
+                            _ => format!("int({raw})"),
+                        };
+                        args.wln(&format!("{}={expr},", sanitize(&member.name)));
+                    }
+                }
+                body.wln(")");
+            }
+            out.wln(&format!("def _encode_{name}(value, values):"));
+            {
+                let mut body = out.indent();
+                let terms = bitfield
+                    .members
+                    .iter()
+                    .map(|member| {
+                        let start = member.range.start();
+                        let width = member.range.end() - start + 1;
+                        let mask = (1u128 << width) - 1;
+                        format!(
+                            "((int(value.{}) & 0x{mask:X}) << {start})",
+                            sanitize(&member.name)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                body.wln(&format!("values.append({terms})"));
+            }
+            out.newline();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Returns the little-endian `struct` format body for a POD type.
+fn pod_struct_format(ctx: &PythonContext, id: TypeID) -> Result<String> {
+    let ty = ctx.world.lookup(id);
+    match &ty.kind {
+        TypeKind::Primitive(p) => Ok(map_primitive_fmt(*p)?.trim_start_matches('<').into()),
+        TypeKind::Enum(enm) => pod_struct_format(ctx, enm.underlying),
+        TypeKind::Bitfld(bitfield) => pod_struct_format(ctx, bitfield.underlying),
+        TypeKind::Pack(pack) => pack
+            .members
+            .iter()
+            .map(|member| pod_struct_format(ctx, member.ty))
+            .collect(),
+        TypeKind::FixedArray(array) => {
+            let inner = pod_struct_format(ctx, array.value_type)?;
+            let count: usize = array
+                .count
+                .try_into()
+                .map_err(|_| anyhow!("fixed array too large for Python struct format"))?;
+            Ok(inner.repeat(count))
+        }
+        TypeKind::Const(c) => pod_struct_format(ctx, c.ty),
+        _ => bail!("expected POD type while generating Python struct format"),
+    }
+}
+
+/// Builds an expression that consumes one POD value from a flat `struct.unpack` iterator.
+fn pod_decode_expr(ctx: &PythonContext, id: TypeID, values: &str) -> Result<String> {
+    let ty = ctx.world.lookup(id);
+    match &ty.kind {
+        TypeKind::Primitive(_) => Ok(format!("next({values})")),
+        TypeKind::Enum(_) => Ok(format!("{}(next({values}))", ctx.name_of(id))),
+        TypeKind::Bitfld(_) | TypeKind::Pack(_) => {
+            Ok(format!("_decode_{}({values})", ctx.name_of(id)))
+        }
+        TypeKind::FixedArray(array) => {
+            let item = pod_decode_expr(ctx, array.value_type, values)?;
+            if let Some(p) = ctx.direct_primitive(array.value_type) {
+                Ok(format!(
+                    "array.array('{}', ({item} for _ in range({})))",
+                    map_typecode(p)?,
+                    array.count
+                ))
+            } else {
+                Ok(format!("[{item} for _ in range({})]", array.count))
+            }
+        }
+        TypeKind::Const(c) => pod_decode_expr(ctx, c.ty, values),
+        _ => bail!("expected POD type while generating Python decoder"),
+    }
+}
+
+/// Emits statements that append a POD value's scalar fields to a flat list.
+fn emit_pod_encode(
+    ctx: &PythonContext,
+    out: &mut impl Sink,
+    id: TypeID,
+    value: &str,
+    values: &str,
+    depth: usize,
+) -> Result<()> {
+    let ty = ctx.world.lookup(id);
+    match &ty.kind {
+        TypeKind::Primitive(_) => out.wln(&format!("{values}.append({value})")),
+        TypeKind::Enum(_) => out.wln(&format!("{values}.append({value}.raw)")),
+        TypeKind::Bitfld(_) | TypeKind::Pack(_) => {
+            out.wln(&format!("_encode_{}({value}, {values})", ctx.name_of(id)))
+        }
+        TypeKind::FixedArray(array) => {
+            let item = format!("_item_{depth}");
+            out.wln(&format!("for {item} in {value}:"));
+            let mut body = out.indent();
+            emit_pod_encode(ctx, &mut body, array.value_type, &item, values, depth + 1)?;
+        }
+        TypeKind::Const(c) => emit_pod_encode(ctx, out, c.ty, value, values, depth)?,
+        _ => bail!("expected POD type while generating Python encoder"),
+    }
     Ok(())
 }
 
@@ -138,6 +307,23 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
     }
     out.newline();
 
+    for (name, fmt) in [
+        ("_U8", "<B"),
+        ("_I8", "<b"),
+        ("_U16", "<H"),
+        ("_I16", "<h"),
+        ("_U32", "<I"),
+        ("_I32", "<i"),
+        ("_U64", "<Q"),
+        ("_I64", "<q"),
+        ("_F32", "<f"),
+        ("_F64", "<d"),
+    ] {
+        out.wln(&format!("{name} = struct.Struct('{fmt}')"));
+    }
+    out.wln("_DATACLASS_SLOTS = {'slots': True} if sys.version_info >= (3, 10) else {}");
+    out.newline();
+
     out.wln("class Reader:");
     {
         let mut idt = out.indent();
@@ -147,15 +333,14 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             body.wln("self._buf = memoryview(data)");
             body.wln("self._pos = 0");
         }
-        idt.wln("def _read_prim(self, fmt):");
+        idt.wln("def _read_struct(self, codec):");
         {
             let mut body = idt.indent();
-            body.wln("size = struct.calcsize(fmt)");
-            body.wln("end = self._pos + size");
+            body.wln("end = self._pos + codec.size");
             body.wln("if end > len(self._buf): raise EOFError('not enough data')");
-            body.wln("(value,) = struct.unpack_from(fmt, self._buf, self._pos)");
+            body.wln("values = codec.unpack_from(self._buf, self._pos)");
             body.wln("self._pos = end");
-            body.wln("return value");
+            body.wln("return values");
         }
         idt.wln("def read_bytes(self, n):");
         {
@@ -167,21 +352,27 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             body.wln("self._pos = end");
             body.wln("return self._buf[start:end]");
         }
-        for (method, fmt) in [
-            ("read_u8", "<B"),
-            ("read_i8", "<b"),
-            ("read_u16", "<H"),
-            ("read_i16", "<h"),
-            ("read_u32", "<I"),
-            ("read_i32", "<i"),
-            ("read_u64", "<Q"),
-            ("read_i64", "<q"),
-            ("read_f32", "<f"),
-            ("read_f64", "<d"),
+        for (method, codec) in [
+            ("read_u8", "_U8"),
+            ("read_i8", "_I8"),
+            ("read_u16", "_U16"),
+            ("read_i16", "_I16"),
+            ("read_u32", "_U32"),
+            ("read_i32", "_I32"),
+            ("read_u64", "_U64"),
+            ("read_i64", "_I64"),
+            ("read_f32", "_F32"),
+            ("read_f64", "_F64"),
         ] {
             idt.wln(&format!("def {method}(self):"));
             let mut body = idt.indent();
-            body.wln(&format!("return self._read_prim('{fmt}')"));
+            body.wln(&format!("end = self._pos + {codec}.size"));
+            body.wln("if end > len(self._buf): raise EOFError('not enough data')");
+            body.wln(&format!(
+                "(value,) = {codec}.unpack_from(self._buf, self._pos)"
+            ));
+            body.wln("self._pos = end");
+            body.wln("return value");
         }
     }
     out.newline();
@@ -204,36 +395,36 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             let mut body = idt.indent();
             body.wln("self._out.extend(b)");
         }
-        idt.wln("def _write_prim(self, fmt, value):");
+        idt.wln("def _write_struct(self, codec, *values):");
         {
             let mut body = idt.indent();
-            body.wln("self._out.extend(struct.pack(fmt, value))");
+            body.wln("self._out.extend(codec.pack(*values))");
         }
-        for (method, fmt) in [
-            ("write_u8", "<B"),
-            ("write_i8", "<b"),
-            ("write_u16", "<H"),
-            ("write_i16", "<h"),
-            ("write_u32", "<I"),
-            ("write_i32", "<i"),
-            ("write_u64", "<Q"),
-            ("write_i64", "<q"),
-            ("write_f32", "<f"),
-            ("write_f64", "<d"),
+        for (method, codec) in [
+            ("write_u8", "_U8"),
+            ("write_i8", "_I8"),
+            ("write_u16", "_U16"),
+            ("write_i16", "_I16"),
+            ("write_u32", "_U32"),
+            ("write_i32", "_I32"),
+            ("write_u64", "_U64"),
+            ("write_i64", "_I64"),
+            ("write_f32", "_F32"),
+            ("write_f64", "_F64"),
         ] {
             idt.wln(&format!("def {method}(self, value):"));
             let mut body = idt.indent();
-            body.wln(&format!("self._write_prim('{fmt}', value)"));
+            body.wln(&format!("self._out.extend({codec}.pack(value))"));
         }
     }
     out.newline();
 
-    out.wln("def _read_primitive_array(reader, fmt, typecode, count):");
+    out.wln("def _read_primitive_array(reader, codec, typecode, count):");
     {
         let mut idt = out.indent();
         idt.wln("count = int(count)");
         idt.wln("if count < 0: raise ValueError('negative array length')");
-        idt.wln("size = struct.calcsize(fmt)");
+        idt.wln("size = codec.size");
         if let Some(guard_byte_size) = context.options.guard_array_size {
             idt.wln(&format!(
                 "if (count * size) > {guard_byte_size}: raise ValueError('array too large')"
@@ -245,7 +436,7 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
         idt.wln("return arr");
     }
     out.newline();
-    out.wln("def _write_primitive_array(writer, fmt, typecode, values: Iterable):");
+    out.wln("def _write_primitive_array(writer, typecode, values: Iterable):");
     {
         let mut idt = out.indent();
         idt.wln("if isinstance(values, array.array) and values.typecode == typecode:");
@@ -258,7 +449,7 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             let mut body = idt.indent();
             body.wln("arr = array.array(typecode, values)");
         }
-        idt.wln("writer.write_bytes(arr.tobytes())");
+        idt.wln("writer.write_bytes(memoryview(arr).cast('B'))");
     }
 }
 
@@ -281,7 +472,7 @@ fn emit_type_definition(
                 }
             }
             out.newline();
-            out.wln("@dataclass(frozen=True)");
+            out.wln("@dataclass(frozen=True, **_DATACLASS_SLOTS)");
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
@@ -308,7 +499,7 @@ fn emit_type_definition(
             out.newline();
         }
         TypeKind::Bitfld(bitfld) => {
-            out.wln("@dataclass");
+            out.wln("@dataclass(**_DATACLASS_SLOTS)");
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
@@ -320,7 +511,7 @@ fn emit_type_definition(
             out.newline();
         }
         TypeKind::Pack(pack) => {
-            out.wln("@dataclass");
+            out.wln("@dataclass(**_DATACLASS_SLOTS)");
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
@@ -332,7 +523,7 @@ fn emit_type_definition(
             out.newline();
         }
         TypeKind::Sequence(seq) => {
-            out.wln("@dataclass");
+            out.wln("@dataclass(**_DATACLASS_SLOTS)");
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
@@ -344,7 +535,7 @@ fn emit_type_definition(
             out.newline();
         }
         TypeKind::Variant(v) => {
-            out.wln("@dataclass");
+            out.wln("@dataclass(**_DATACLASS_SLOTS)");
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
@@ -413,18 +604,13 @@ fn emit_type_definition(
 fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
-        TypeKind::Pack(pack) => {
+        TypeKind::Pack(_pack) => {
             out.wln(&format!("def read_{name}(reader):"));
             let mut idt = out.indent();
-            idt.wln(&format!("return {name}("));
-            {
-                let mut args = idt.indent();
-                for m in &pack.members {
-                    let expr = read_expr(ctx, m.ty, "reader")?;
-                    args.wln(&format!("{} = {},", sanitize(&m.name), expr));
-                }
-            }
-            idt.wln(")");
+            idt.wln(&format!(
+                "values = iter(reader._read_struct(_{name}_STRUCT))"
+            ));
+            idt.wln(&format!("return _decode_{name}(values)"));
             idt.newline();
         }
         TypeKind::Enum(enm) => {
@@ -508,10 +694,10 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
                 ));
             }
             if let Some(p) = ctx.direct_primitive(arr.value_type) {
-                let fmt = map_primitive_fmt(p)?;
+                let codec = primitive_codec(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
-                    "return _read_primitive_array(reader, '{fmt}', '{typecode}', count)"
+                    "return _read_primitive_array(reader, {codec}, '{typecode}', count)"
                 ));
             } else {
                 idt.wln("out = []");
@@ -529,10 +715,10 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             out.wln(&format!("def read_{name}(reader):"));
             let mut idt = out.indent();
             if let Some(p) = ctx.direct_primitive(arr.value_type) {
-                let fmt = map_primitive_fmt(p)?;
+                let codec = primitive_codec(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
-                    "return _read_primitive_array(reader, '{fmt}', '{typecode}', {})",
+                    "return _read_primitive_array(reader, {codec}, '{typecode}', {})",
                     arr.count
                 ));
             } else {
@@ -557,12 +743,12 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
 fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> Result<()> {
     let name = ctx.name_of(id);
     match &ty.kind {
-        TypeKind::Pack(pack) => {
+        TypeKind::Pack(_pack) => {
             out.wln(&format!("def write_{name}(writer, value):"));
             let mut idt = out.indent();
-            for m in &pack.members {
-                write_value(ctx, &mut idt, m.ty, &format!("value.{}", sanitize(&m.name)))?;
-            }
+            idt.wln("values = []");
+            idt.wln(&format!("_encode_{name}(value, values)"));
+            idt.wln(&format!("writer._write_struct(_{name}_STRUCT, *values)"));
             idt.newline();
         }
         TypeKind::Enum(enm) => {
@@ -632,10 +818,9 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             let size_write = write_primitive_method(ctx, arr.size_type)?;
             idt.wln(&format!("writer.{size_write}(len(values))"));
             if let Some(p) = ctx.direct_primitive(arr.value_type) {
-                let fmt = map_primitive_fmt(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
-                    "_write_primitive_array(writer, '{fmt}', '{typecode}', values)"
+                    "_write_primitive_array(writer, '{typecode}', values)"
                 ));
             } else {
                 idt.wln("for item in values:");
@@ -648,14 +833,13 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             out.wln(&format!("def write_{name}(writer, values):"));
             let mut idt = out.indent();
             if let Some(p) = ctx.direct_primitive(arr.value_type) {
-                let fmt = map_primitive_fmt(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
                     "if len(values) != {}: raise ValueError('expected {} items')",
                     arr.count, arr.count
                 ));
                 idt.wln(&format!(
-                    "_write_primitive_array(writer, '{fmt}', '{typecode}', values)"
+                    "_write_primitive_array(writer, '{typecode}', values)"
                 ));
             } else {
                 idt.wln(&format!(
@@ -819,6 +1003,23 @@ fn map_primitive_fmt(p: Primitive) -> Result<&'static str> {
         (Datatype::Integer, Signedness::Signed, BitWidth::W64) => Ok("<q"),
         (Datatype::Float, _, BitWidth::W32) => Ok("<f"),
         (Datatype::Float, _, BitWidth::W64) => Ok("<d"),
+        _ => bail!("unsupported primitive type"),
+    }
+}
+
+/// Returns the cached `struct.Struct` constant for a primitive.
+fn primitive_codec(p: Primitive) -> Result<&'static str> {
+    match (p.dtype, p.sign, p.width) {
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W8) => Ok("_U8"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W16) => Ok("_U16"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W32) => Ok("_U32"),
+        (Datatype::Integer, Signedness::Unsigned, BitWidth::W64) => Ok("_U64"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W8) => Ok("_I8"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W16) => Ok("_I16"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W32) => Ok("_I32"),
+        (Datatype::Integer, Signedness::Signed, BitWidth::W64) => Ok("_I64"),
+        (Datatype::Float, _, BitWidth::W32) => Ok("_F32"),
+        (Datatype::Float, _, BitWidth::W64) => Ok("_F64"),
         _ => bail!("unsupported primitive type"),
     }
 }

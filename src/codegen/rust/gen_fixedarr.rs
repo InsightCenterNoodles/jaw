@@ -57,6 +57,8 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &FixedArray) 
     let elem_name = ctx.name_of(arr.value_type);
 
     emit_jread(&name, None, out, |idt| {
+        // Stable `Read::read_exact` requires initialized storage; using
+        // `MaybeUninit` through `&mut [u8]` would be undefined behavior.
         idt.wln(&format!(
             "let mut out : [{}; {}] = Default::default();",
             elem_name, arr.count
@@ -115,7 +117,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &FixedArray) 
                     "if self.0.len() != {} {{ return Err(invalid_data(\"unexpected fixed array length\")); }}",
                     arr.count
                 ));
-        if ctx.direct_primitive(arr.value_type).is_some() {
+        if ctx.can_bulk_array(id).is_some() {
             idt.wln("writer.write_all(bytemuck::cast_slice(self.0))?;");
         } else {
             idt.wln("for v in self.0");

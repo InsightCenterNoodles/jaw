@@ -754,10 +754,7 @@ impl<'a> JawWrite for MyPODFixedListView<'a>
     fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>
     {
         if self.0.len() != 8 { return Err(invalid_data("unexpected fixed array length")); }
-        for v in self.0
-        {
-            v.jaw_write(writer)?;
-        }
+        writer.write_all(bytemuck::cast_slice(self.0))?;
         Ok(())
     }
 }
@@ -800,10 +797,7 @@ impl JawWrite for MyOtherPODDynList
         if len > max_len { return Err(invalid_data("array length too large to encode")); }
         let count: u16 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
         count.jaw_write(writer)?;
-        for v in &self.0
-        {
-            v.jaw_write(writer)?
-        }
+        writer.write_all(bytemuck::cast_slice(&self.0))?;
         Ok(())
     }
 }
@@ -817,10 +811,7 @@ impl<'a> JawWrite for MyOtherPODDynListView<'a>
         if len > max_len { return Err(invalid_data("array length too large to encode")); }
         let count: u16 = len.try_into().map_err(|_| invalid_data("array length too large to encode"))?;
         count.jaw_write(writer)?;
-        for v in self.0
-        {
-            v.jaw_write(writer)?
-        }
+        writer.write_all(bytemuck::cast_slice(self.0))?;
         Ok(())
     }
 }

@@ -12,6 +12,11 @@ Quickstart
 
 The output path comes before one or more input schemas. When multiple inputs are supplied, their definitions are merged into one generated module.
 
+Benchmarks
+
+- Run the generated Rust encode/decode benchmarks: `cargo bench --bench generated_rust`
+- The benchmarks use checked-in Rust generator output and report latency and byte throughput for small messages, nested messages, and byte/POD arrays from empty through roughly 1 MiB. They also compare reused, fresh, and buffered writers.
+
 DSL Summary
 
 An example of the available features is provided in `assets/example.jaw`.

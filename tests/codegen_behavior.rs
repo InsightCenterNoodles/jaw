@@ -109,12 +109,16 @@ dyn_array MyPODDynList : u16 * MyPOD
         rust_src.contains("vec![Default::default(); count]"),
         "rust dynamic-array bulk read uses Default initialization"
     );
+    assert!(
+        rust_src.contains("writer.write_all(bytemuck::cast_slice(self.0))?;"),
+        "rust pack arrays should use the bulk write path"
+    );
 
     let _ = fs::remove_file(&rust_out);
 }
 
 #[test]
-fn cpp_fixed_array_of_pack_uses_bulk_read() {
+fn cpp_arrays_of_pack_use_bulk_io() {
     let world = world_from(
         r#"
 pack MyPOD
@@ -122,6 +126,7 @@ pack MyPOD
 - b_thing : u64
 
 fixed_array MyPODFixedList : 8 * MyPOD
+dyn_array MyPODDynList : u16 * MyPOD
 "#,
     );
 
@@ -135,8 +140,84 @@ fixed_array MyPODFixedList : 8 * MyPOD
             && cpp_src.contains("return read_scalar(reader, value);"),
         "cpp fixed array of pack should use a bulk read"
     );
+    assert!(
+        cpp_src.contains("return write_bytes(writer, value.data(), sizeof(value));"),
+        "cpp fixed array of pack should use a bulk write"
+    );
+    assert!(
+        cpp_src.contains("return write_bytes(writer, value.data(), value.size_bytes());"),
+        "cpp dynamic array of pack should use a bulk write"
+    );
 
     let _ = fs::remove_file(&cpp_out);
+}
+
+#[test]
+fn cpp_variant_reads_move_payloads() {
+    let world = world_from(
+        r#"
+seq Payload
+- value : u8
+
+variant Message : u8
+- 1 => Payload
+"#,
+    );
+
+    let cpp_out = temp_path("cpp_variant_move", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+    assert!(
+        cpp_src.contains("std::move(payload)"),
+        "cpp variant reads should move decoded payloads"
+    );
+    let _ = fs::remove_file(&cpp_out);
+}
+
+#[test]
+fn python_emits_cached_pod_codecs_and_buffer_writes() {
+    let world = world_from(
+        r#"
+pack Inner
+- a : u8
+- b : u64
+
+fixed_array Tail : 4 * u8
+
+pack Outer
+- inner : Inner
+- tail : Tail
+"#,
+    );
+
+    let py_out = temp_path("python_pod_codec", "py");
+    codegen::emit_python(&world, &Default::default(), &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(
+        py_src.contains("_Outer_STRUCT = struct.Struct('<BQBBBB')"),
+        "python should flatten nested POD layouts into one cached codec"
+    );
+    assert!(
+        py_src.contains("values = iter(reader._read_struct(_Outer_STRUCT))"),
+        "python pack reads should use the cached codec"
+    );
+    assert!(
+        py_src.contains("writer._write_struct(_Outer_STRUCT, *values)"),
+        "python pack writes should use the cached codec"
+    );
+    assert!(
+        py_src.contains("writer.write_bytes(memoryview(arr).cast('B'))"),
+        "python primitive arrays should avoid tobytes allocation"
+    );
+    assert!(
+        py_src.contains("@dataclass(**_DATACLASS_SLOTS)"),
+        "python data classes should use slots on supported interpreters"
+    );
+    assert!(
+        !py_src.contains("struct.calcsize"),
+        "python scalar reads should use cached Struct sizes"
+    );
+    let _ = fs::remove_file(&py_out);
 }
 
 #[test]
