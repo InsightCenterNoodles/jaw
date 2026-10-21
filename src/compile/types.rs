@@ -97,6 +97,7 @@ pub struct Const {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PrimitiveLiteral {
+    Boolean(bool),
     Integer(i128),
     Real(f64),
 }
@@ -105,6 +106,12 @@ impl FromStr for PrimitiveLiteral {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "true" => return Ok(Self::Boolean(true)),
+            "false" => return Ok(Self::Boolean(false)),
+            _ => {}
+        }
+
         if let Ok(res) = i128::from_str(s) {
             return Ok(Self::Integer(res));
         }
@@ -244,6 +251,7 @@ pub enum TypeKind {
     DynamicArray(DynamicArray),
     FixedArray(FixedArray),
     Const(Const),
+    Bool,
     Primitive(Primitive),
     Void,
 }
@@ -267,7 +275,7 @@ impl Type {
             TypeKind::DynamicArray(_) => false,
             TypeKind::FixedArray(x) => world.lookup(x.value_type).is_pod(world),
             TypeKind::Const(x) => world.lookup(x.ty).is_pod(world),
-            TypeKind::Primitive(_) => true,
+            TypeKind::Bool | TypeKind::Primitive(_) => true,
             TypeKind::Void => false,
         }
     }
@@ -303,6 +311,36 @@ impl World {
         &self.module_name
     }
 
+    /// Returns whether any user definition directly references the built-in bool type.
+    pub(crate) fn uses_bool(&self) -> bool {
+        let is_bool = |id: TypeID| matches!(self.lookup(id).kind, TypeKind::Bool);
+        self.definitions.values().any(|ty| match &ty.kind {
+            TypeKind::Pack(x) => x.members.iter().any(|m| is_bool(m.ty)),
+            TypeKind::Enum(x) => is_bool(x.underlying),
+            TypeKind::Bitfld(x) => {
+                is_bool(x.underlying) || x.members.iter().any(|m| is_bool(m.underlying))
+            }
+            TypeKind::Variant(x) => {
+                is_bool(x.discriminant) || x.members.iter().any(|m| is_bool(m.ty))
+            }
+            TypeKind::Sequence(x) => x.members.iter().any(|m| is_bool(m.ty)),
+            TypeKind::DynamicArray(x) => is_bool(x.size_type) || is_bool(x.value_type),
+            TypeKind::FixedArray(x) => is_bool(x.value_type),
+            TypeKind::Const(x) => is_bool(x.ty),
+            TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void => false,
+        })
+    }
+
+    /// Returns whether a packed field or fixed array needs byte-backed boolean storage.
+    pub(crate) fn uses_wire_bool(&self) -> bool {
+        let is_bool = |id: TypeID| matches!(self.lookup(id).kind, TypeKind::Bool);
+        self.definitions.values().any(|ty| match &ty.kind {
+            TypeKind::Pack(x) => x.members.iter().any(|m| is_bool(m.ty)),
+            TypeKind::FixedArray(x) => is_bool(x.value_type),
+            _ => false,
+        })
+    }
+
     pub fn merge(self, mut other: World) -> anyhow::Result<World> {
         // check if we can actually merge
         for dup in self
@@ -312,7 +350,10 @@ impl World {
             .duplicates_by(|t| t.ident.clone())
             .cloned()
         {
-            if matches!(dup.kind, TypeKind::Void | TypeKind::Primitive(_)) {
+            if matches!(
+                dup.kind,
+                TypeKind::Void | TypeKind::Bool | TypeKind::Primitive(_)
+            ) {
                 continue;
             }
 
@@ -392,7 +433,7 @@ impl World {
                         remap(&mut fixed_array.value_type);
                     }
                     TypeKind::Const(c) => remap(&mut c.ty),
-                    TypeKind::Primitive(_) => {}
+                    TypeKind::Bool | TypeKind::Primitive(_) => {}
                     TypeKind::Void => {}
                 };
 

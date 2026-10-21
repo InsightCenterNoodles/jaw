@@ -26,14 +26,18 @@ pub fn emit_fixedarr(
         } else {
             ""
         };
-        let elem = ctx.name_of(arr.value_type);
+        let elem = ctx.rust_pod_type(arr.value_type);
         out.wln(&format!("#[derive(Debug, Clone, {}PartialEq)]", maybe_copy));
         out.wln(&format!("pub struct {name}(pub [{elem}; {}]);", arr.count));
         out.newline();
     }
 
     {
-        let elem_view = ctx.rust_write_decl_type(arr.value_type, "'a")?;
+        let elem_view = if ctx.is_bool(arr.value_type) {
+            "WireBool".into()
+        } else {
+            ctx.rust_write_decl_type(arr.value_type, "'a")?
+        };
         out.wln("#[derive(Debug, PartialEq)]");
         out.wln(&format!(
             "pub struct {view_type}<'a>(pub &'a [{elem_view}]);"
@@ -54,7 +58,7 @@ pub fn emit_fixedarr(
 fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, arr: &FixedArray) -> Result<()> {
     let name = ctx.name_of(id);
 
-    let elem_name = ctx.name_of(arr.value_type);
+    let elem_name = ctx.rust_pod_type(arr.value_type);
 
     emit_jread(&name, None, out, |idt| {
         // Stable `Read::read_exact` requires initialized storage; using

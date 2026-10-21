@@ -153,6 +153,87 @@ dyn_array MyPODDynList : u16 * MyPOD
 }
 
 #[test]
+fn bool_codegen_is_checked_for_values_and_lazy_for_pod() {
+    let world = world_from(
+        r#"
+const Enabled : bool = true
+fixed_array FixedBools : 3 * bool
+dyn_array Bools : u8 * bool
+
+pack Packed
+- enabled : bool
+- flags : FixedBools
+
+seq Message
+- enabled : bool
+- packed : Packed
+- values : Bools
+"#,
+    );
+
+    let rust_out = temp_path("rust_bool", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(rust_src.contains("pub struct WireBool(u8);"));
+    assert!(rust_src.contains("pub enabled: WireBool,"));
+    assert!(rust_src.contains("pub struct FixedBools(pub [WireBool; 3]);"));
+    assert!(rust_src.contains("pub enabled: bool,"));
+    assert!(rust_src.contains("match u8::jaw_read(reader)?"));
+    assert!(rust_src.contains("writer.write_all(bytemuck::bytes_of(self))"));
+    assert!(!rust_src.contains("impl JawWrite for Packed\n{\n    fn jaw_write<W: Write>(&self, writer: &mut W) -> io::Result<()>\n    {\n        self.enabled.try_get"));
+    let _ = fs::remove_file(&rust_out);
+
+    let cpp_out = temp_path("cpp_bool", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+    assert!(cpp_src.contains("class WireBool"));
+    assert!(cpp_src.contains("std::optional<bool> value() const"));
+    assert!(cpp_src.contains("WireBool enabled;"));
+    assert!(cpp_src.contains("std::array<WireBool, 3>"));
+    assert!(cpp_src.contains("std::vector<bool>"));
+    assert!(cpp_src.contains("raw > 1"));
+    assert!(cpp_src.contains("return write_scalar(writer, value);"));
+    let _ = fs::remove_file(&cpp_out);
+
+    let py_out = temp_path("python_bool", "py");
+    codegen::emit_python(&world, &Default::default(), &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(py_src.contains("class WireBool:"));
+    assert!(py_src.contains("enabled: WireBool"));
+    assert!(py_src.contains("enabled: bool"));
+    assert!(py_src.contains("WireBool._from_raw"));
+    assert!(py_src.contains("values.append(value.enabled._raw)"));
+    assert!(py_src.contains("raise ValueError(f'invalid boolean byte: {value}')"));
+    let _ = fs::remove_file(&py_out);
+}
+
+#[test]
+fn logical_bool_does_not_pull_in_pod_wrapper() {
+    let world = world_from("seq Message\n- enabled : bool\n");
+
+    let rust_out = temp_path("rust_logical_bool", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(rust_src.contains("impl JawRead for bool"));
+    assert!(!rust_src.contains("pub struct WireBool"));
+    let _ = fs::remove_file(&rust_out);
+
+    let cpp_out = temp_path("cpp_logical_bool", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+    assert!(cpp_src.contains("raw > 1"));
+    assert!(!cpp_src.contains("class WireBool"));
+    let _ = fs::remove_file(&cpp_out);
+
+    let py_out = temp_path("python_logical_bool", "py");
+    codegen::emit_python(&world, &Default::default(), &py_out).expect("emit python");
+    let py_src = fs::read_to_string(&py_out).expect("read python output");
+    assert!(py_src.contains("def read_bool(self):"));
+    assert!(!py_src.contains("class WireBool:"));
+    let _ = fs::remove_file(&py_out);
+}
+
+#[test]
 fn cpp_header_includes_helper_dependencies() {
     let world = world_from(
         r#"

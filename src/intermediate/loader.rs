@@ -246,6 +246,17 @@ fn direct_dependencies(ty: &Type) -> Vec<TypeName> {
 fn is_builtin(name: &TypeName) -> bool {
     matches!(
         name.as_str(),
-        "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "void"
+        "bool"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "f32"
+            | "f64"
+            | "void"
     )
 }

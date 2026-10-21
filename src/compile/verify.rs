@@ -61,7 +61,7 @@ fn verify_is_pod(world: &World, tid: TypeID) -> anyhow::Result<()> {
             verify_is_pod(world, fixed_array.value_type).with_context(ctx)?;
         }
         TypeKind::Const(c) => verify_is_pod(world, c.ty).with_context(ctx)?,
-        TypeKind::Primitive(..) => return Ok(()),
+        TypeKind::Bool | TypeKind::Primitive(..) => return Ok(()),
         _ => {
             return Err(NotPODError::TypeNotPOD(ty.into()).into());
         }
@@ -97,18 +97,6 @@ fn verify_is_integer(world: &World, tid: TypeID) -> anyhow::Result<Primitive> {
         TypeKind::Primitive(x) if matches!(x.dtype, Datatype::Integer) => Ok(*x),
         TypeKind::Const(c) => verify_is_integer(world, c.ty),
         _ => Err(anyhow!("type is not integer").context(ctx())),
-    }
-}
-
-/// Asserts that a type is primitive, following const aliases.
-fn verify_is_primitive(world: &World, tid: TypeID) -> anyhow::Result<Primitive> {
-    let ty = world.lookup(tid);
-    let ctx = || format!("while checking {}", Typeref::from(ty));
-
-    match &ty.kind {
-        TypeKind::Primitive(p) => Ok(*p),
-        TypeKind::Const(c) => verify_is_primitive(world, c.ty).with_context(ctx),
-        _ => Err(anyhow!("type is not primitive").context(ctx())),
     }
 }
 
@@ -395,26 +383,24 @@ fn verify_fixarray(world: &World, ty: &Type, value: &FixedArray) -> anyhow::Resu
 /// Verifies that const declarations currently target primitive types.
 fn verify_const(world: &World, ty: &Type, value: &Const) -> anyhow::Result<()> {
     let ctx = || format!("while verifying const {}", Typeref::from(ty));
-    verify_is_primitive(world, value.ty).with_context(ctx)?;
-
-    let TypeKind::Primitive(p) = world.lookup(value.ty).kind else {
-        bail!("expected primitive");
-    };
-
-    match (value.value, p.dtype) {
-        (PrimitiveLiteral::Integer(v), Datatype::Integer) => {
+    match (&world.lookup(value.ty).kind, value.value) {
+        (TypeKind::Bool, PrimitiveLiteral::Boolean(_)) => {}
+        (TypeKind::Primitive(p), PrimitiveLiteral::Integer(v))
+            if matches!(p.dtype, Datatype::Integer) =>
+        {
             p.verify_can_fit(v).with_context(ctx)?;
         }
-        (PrimitiveLiteral::Real(v), Datatype::Float) => {
+        (TypeKind::Primitive(p), PrimitiveLiteral::Real(v))
+            if matches!(p.dtype, Datatype::Float) =>
+        {
             p.verify_can_fit_real(v).with_context(ctx)?;
         }
-        _ => {
-            bail!(
-                "primitive of type {:?} is not compatible with {}",
-                value.value,
-                ty.ident
-            );
-        }
+        (TypeKind::Bool | TypeKind::Primitive(_), _) => bail!(
+            "literal {:?} is not compatible with {}",
+            value.value,
+            world.lookup(value.ty).ident
+        ),
+        _ => bail!("const target is not primitive (expected bool or a numeric primitive)"),
     }
 
     Ok(())
@@ -432,7 +418,7 @@ pub(super) fn verify(world: World) -> anyhow::Result<World> {
             TypeKind::DynamicArray(v) => verify_dynarray(&world, item, v)?,
             TypeKind::FixedArray(v) => verify_fixarray(&world, item, v)?,
             TypeKind::Const(v) => verify_const(&world, item, v)?,
-            TypeKind::Primitive(_) => {}
+            TypeKind::Bool | TypeKind::Primitive(_) => {}
             TypeKind::Void => {}
         }
     }

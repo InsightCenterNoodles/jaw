@@ -27,6 +27,7 @@ pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow:
 
             let target = ctx.cpp_type(c.ty, Namespace::Read)?;
             let value = match c.value {
+                crate::compile::PrimitiveLiteral::Boolean(v) => v.to_string(),
                 crate::compile::PrimitiveLiteral::Integer(v) => v.to_string(),
                 crate::compile::PrimitiveLiteral::Real(v) => v.to_string(),
             };
@@ -36,6 +37,10 @@ pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow:
             ));
         }
 
+        if world.uses_wire_bool() {
+            emit_wire_bool(&mut ns);
+            ns.newline();
+        }
         ns.wln("template <class T> struct ArrayRef;");
 
         emit_namespace_fwd(&ctx, &mut ns, Namespace::Read)?;
@@ -43,7 +48,7 @@ pub fn emit(world: &World, global: &GlobalOptions, out: &mut Outfile) -> anyhow:
         emit_namespace_fwd(&ctx, &mut ns, Namespace::Write)?;
 
         ns.newline();
-        emit_helpers(&mut ns);
+        emit_helpers(&mut ns, world.uses_bool());
 
         ns.newline();
         emit_namespace(&ctx, &mut ns, Namespace::Read)?;
@@ -100,9 +105,22 @@ impl<'a> CppContext<'a> {
     fn cpp_type(&self, id: TypeID, ns: Namespace) -> anyhow::Result<String> {
         let ty = self.world.lookup(id);
         match &ty.kind {
+            TypeKind::Bool => Ok("bool".into()),
             TypeKind::Primitive(p) => Ok(map_primitive(*p)?),
             TypeKind::Void => Ok("std::monostate".into()),
             _ => Ok(self.name_of(id, ns).to_string()),
+        }
+    }
+
+    fn is_bool(&self, id: TypeID) -> bool {
+        matches!(self.world.lookup(id).kind, TypeKind::Bool)
+    }
+
+    fn cpp_pod_type(&self, id: TypeID, ns: Namespace) -> anyhow::Result<String> {
+        if self.is_bool(id) {
+            Ok("WireBool".into())
+        } else {
+            self.cpp_type(id, ns)
         }
     }
 
@@ -146,10 +164,11 @@ impl<'a> CppContext<'a> {
             }
             TypeKind::FixedArray(fixed_array) => {
                 let elem = fixed_array.value_type;
-                matches!(
-                    &self.world.lookup(elem).kind,
-                    TypeKind::Primitive(_) | TypeKind::Pack(_)
-                )
+                self.is_bool(elem)
+                    || matches!(
+                        &self.world.lookup(elem).kind,
+                        TypeKind::Primitive(_) | TypeKind::Pack(_)
+                    )
             }
             _ => false,
         }
@@ -213,7 +232,7 @@ fn emit_preamble(out: &mut Outfile, namespace: &str) -> Result<()> {
 }
 
 /// Emits shared helpers (reader/writer concepts and small utilities).
-fn emit_helpers(out: &mut impl Sink) {
+fn emit_helpers(out: &mut impl Sink, uses_bool: bool) {
     out.wln("template <class Reader>");
     out.wln("inline bool read_bytes(Reader& reader, void* dst, size_t n)");
     {
@@ -248,7 +267,21 @@ fn emit_helpers(out: &mut impl Sink) {
     out.wln("inline bool read_value(Reader& reader, T& value)");
     {
         let mut idt = out.indent();
-        idt.wln("if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)");
+        if uses_bool {
+            idt.wln("if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>)");
+            {
+                let mut inner = idt.indent();
+                inner.wln("std::uint8_t raw{};");
+                inner.wln("if (!read_scalar(reader, raw) || raw > 1) return false;");
+                inner.wln("value = raw != 0;");
+                inner.wln("return true;");
+            }
+            idt.wln(
+                "else if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)",
+            );
+        } else {
+            idt.wln("if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)");
+        }
         {
             let mut inner = idt.indent();
             inner.wln("return read_scalar(reader, value);");
@@ -264,7 +297,19 @@ fn emit_helpers(out: &mut impl Sink) {
     out.wln("inline bool write_value(Writer& writer, T const& value)");
     {
         let mut idt = out.indent();
-        idt.wln("if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)");
+        if uses_bool {
+            idt.wln("if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>)");
+            {
+                let mut inner = idt.indent();
+                inner.wln("const std::uint8_t raw = value ? 1 : 0;");
+                inner.wln("return write_scalar(writer, raw);");
+            }
+            idt.wln(
+                "else if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)",
+            );
+        } else {
+            idt.wln("if constexpr (std::is_trivially_copyable_v<T> && std::is_arithmetic_v<T>)");
+        }
         {
             let mut inner = idt.indent();
             inner.wln("return write_scalar(writer, value);");
@@ -314,6 +359,27 @@ fn emit_helpers(out: &mut impl Sink) {
     out.wln(";");
 }
 
+fn emit_wire_bool(out: &mut impl Sink) {
+    out.wln("class WireBool");
+    {
+        let mut idt = out.indent();
+        idt.wln("std::uint8_t storage{};");
+        idt.wln("public:");
+        idt.wln("constexpr WireBool() = default;");
+        idt.wln("constexpr WireBool(bool value) : storage(value ? 1 : 0) {}");
+        idt.wln("constexpr std::optional<bool> value() const");
+        {
+            let mut body = idt.indent();
+            body.wln("if (storage > 1) return std::nullopt;");
+            body.wln("return storage != 0;");
+        }
+        idt.wln("constexpr bool operator==(WireBool const&) const = default;");
+    }
+    out.wln(";");
+    out.wln("static_assert(sizeof(WireBool) == 1);");
+    out.wln("static_assert(std::is_trivially_copyable_v<WireBool>);");
+}
+
 /// Emits forward declarations for all types in the selected namespace.
 fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyhow::Result<()> {
     out.wln(&format!("namespace {} ", ctx.namespace_name(ns)));
@@ -325,6 +391,7 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
             if matches!(
                 ty.kind,
                 TypeKind::Primitive(_)
+                    | TypeKind::Bool
                     | TypeKind::Void
                     | TypeKind::DynamicArray(_)
                     | TypeKind::FixedArray(_)
@@ -343,7 +410,10 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
         }
 
         for (_, ty) in ctx.types() {
-            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
+            if matches!(
+                ty.kind,
+                TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void
+            ) {
                 continue;
             }
             emit_forward_decls(&mut block, ty, ns);
@@ -360,7 +430,10 @@ fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyho
         let mut block = out.indent();
 
         for (id, ty) in ctx.types() {
-            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
+            if matches!(
+                ty.kind,
+                TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void
+            ) {
                 continue;
             }
             emit_type_def(ctx, &mut block, id, ty, ns)?;
@@ -369,7 +442,10 @@ fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyho
         block.newline();
 
         for (_, ty) in ctx.types() {
-            if matches!(ty.kind, TypeKind::Primitive(_) | TypeKind::Void) {
+            if matches!(
+                ty.kind,
+                TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void
+            ) {
                 continue;
             }
             emit_forward_decls(&mut block, ty, ns);
@@ -433,14 +509,14 @@ fn emit_type_def_fwd(
             }
         }
         TypeKind::FixedArray(arr) => {
-            let value_ty = ctx.cpp_type(arr.value_type, ns)?;
+            let value_ty = ctx.cpp_pod_type(arr.value_type, ns)?;
 
             out.wln(&format!(
                 "using {} = std::array<{}, {}>;",
                 name, value_ty, arr.count
             ));
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     out.newline();
@@ -465,7 +541,7 @@ fn emit_type_def(
             {
                 let mut idt = out.indent();
                 for m in &pack.members {
-                    let mty = ctx.cpp_type(m.ty, ns)?;
+                    let mty = ctx.cpp_pod_type(m.ty, ns)?;
                     idt.wln(&format!("{} {};", mty, sanitize(&m.name)));
                 }
             }
@@ -619,14 +695,14 @@ fn emit_type_def(
             }
         }
         TypeKind::FixedArray(arr) => {
-            let value_ty = ctx.cpp_type(arr.value_type, ns)?;
+            let value_ty = ctx.cpp_pod_type(arr.value_type, ns)?;
 
             out.wln(&format!(
                 "using {} = std::array<{}, {}>;",
                 name, value_ty, arr.count
             ));
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     out.newline();
@@ -638,7 +714,7 @@ fn emit_type_def(
 fn emit_forward_decls(out: &mut impl Sink, ty: &Type, ns: Namespace) {
     if matches!(
         ty.kind,
-        TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Const(_)
+        TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Const(_)
     ) {
         return;
     }
@@ -790,7 +866,12 @@ fn emit_read_impl(
                 idt.wln("if (!read_scalar(reader, count_raw)) return false;");
                 idt.wln("auto count = static_cast<uint64_t>(count_raw);");
                 idt.wln("if (count > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;");
-                ctx.insert_optional_size_check(&mut idt, "count", &value_ty);
+                let guard_ty = if ctx.is_bool(arr.value_type) {
+                    "std::uint8_t"
+                } else {
+                    &value_ty
+                };
+                ctx.insert_optional_size_check(&mut idt, "count", guard_ty);
                 idt.wln("value.clear();");
                 idt.wln("value.reserve(static_cast<size_t>(count));");
                 idt.wln("for (size_t i = 0; i < static_cast<size_t>(count); ++i)");
@@ -821,7 +902,7 @@ fn emit_read_impl(
                 idt.wln("return true;");
             }
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }
@@ -1004,7 +1085,7 @@ fn emit_write_impl(
                 }
             }
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }

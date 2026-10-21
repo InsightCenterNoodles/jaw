@@ -139,7 +139,12 @@ pack C
         let world = compile(module).expect("compile should succeed");
         let names: Vec<String> = world
             .iter()
-            .filter(|(_, ty)| !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_)))
+            .filter(|(_, ty)| {
+                !matches!(
+                    ty.kind,
+                    TypeKind::Bool | TypeKind::Void | TypeKind::Primitive(_)
+                )
+            })
             .map(|(_, ty)| ty.ident.to_string())
             .collect();
 
@@ -384,6 +389,55 @@ const Scale : f32 = 1.5
     assert_compile_err_contains("const Bad : u8 = nope\n", "unable to parse literal");
 }
 
+#[test]
+fn bool_is_a_distinct_one_byte_pod_type() {
+    let world = compile_src(
+        r#"
+const Enabled : bool = true
+const Disabled : bool = false
+
+fixed_array FixedBools : 4 * bool
+dyn_array Bools : u8 * bool
+
+pack Packed
+- enabled : bool
+- values : FixedBools
+
+seq Message
+- enabled : bool
+- values : Bools
+"#,
+    )
+    .expect("bool should be valid in values and POD layouts");
+
+    let values: Vec<_> = world
+        .iter()
+        .filter_map(|(_, ty)| match &ty.kind {
+            TypeKind::Const(c) => Some(c.value),
+            _ => None,
+        })
+        .collect();
+    assert!(values.contains(&PrimitiveLiteral::Boolean(true)));
+    assert!(values.contains(&PrimitiveLiteral::Boolean(false)));
+}
+
+#[test]
+fn bool_is_excluded_from_integer_roles() {
+    for source in [
+        "enum Bad : bool\n- A = 0\n",
+        "variant Bad : bool\n- 0 => void\n",
+        "bits Bad : bool\n- 0 flag : u8\n",
+        "bits Bad : u8\n- 0 flag : bool\n",
+        "dyn_array Bad : bool * u8\n",
+    ] {
+        compile_src(source).expect_err("bool must not be accepted in integer-only roles");
+    }
+
+    assert_compile_err_contains("const Bad : bool = 1\n", "not compatible");
+    assert_compile_err_contains("const Bad : u8 = true\n", "not compatible");
+    assert_compile_err_contains("pack WireBool\n- value : u8\n", "reserved");
+}
+
 /// Test: merge worlds
 #[test]
 fn merge_world_basic() {
@@ -489,7 +543,12 @@ seq Other
     let merged = first.merge(second).expect("merge compiled worlds");
     let user_types: Vec<_> = merged
         .iter()
-        .filter(|(_, ty)| !matches!(ty.kind, TypeKind::Void | TypeKind::Primitive(_)))
+        .filter(|(_, ty)| {
+            !matches!(
+                ty.kind,
+                TypeKind::Bool | TypeKind::Void | TypeKind::Primitive(_)
+            )
+        })
         .map(|(_, ty)| ty.ident.to_string())
         .collect();
 

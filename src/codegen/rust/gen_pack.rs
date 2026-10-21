@@ -23,7 +23,7 @@ pub fn emit_pack(
     {
         let mut idt = out.indent();
         for m in &pack.members {
-            let field_ty = ctx.name_of(m.ty);
+            let field_ty = ctx.rust_pod_type(m.ty);
             idt.wln(&format!("pub {}: {},", m.name, field_ty));
         }
     }

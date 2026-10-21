@@ -8,7 +8,8 @@ pub struct GlobalOptions {
     #[arg(long)]
     pub guard_array_size: Option<u64>,
 
-    /// Rust: Use JawRead and JawWrite traits from the given module
+    /// Rust: Use JawRead and JawWrite traits from the given module. That module must implement
+    /// both traits for all built-in scalar types used by the schema, including bool.
     #[arg(long)]
     pub rust_share_traits: Option<String>,
 

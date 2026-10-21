@@ -58,6 +58,18 @@ impl<'a> RustContext<'a> {
         }
     }
 
+    pub fn is_bool(&self, id: TypeID) -> bool {
+        matches!(self.world.lookup(id).kind, TypeKind::Bool)
+    }
+
+    pub fn rust_pod_type(&self, id: TypeID) -> String {
+        if self.is_bool(id) {
+            "WireBool".into()
+        } else {
+            self.name_of(id)
+        }
+    }
+
     /// Returns the primitive for a type following aliases and enums, if any.
     pub fn underlying_primitive(&self, id: TypeID) -> Option<Primitive> {
         let ty = self.world.lookup(id);
@@ -73,7 +85,7 @@ impl<'a> RustContext<'a> {
     pub fn view_needs_lifetime(&self, id: TypeID) -> bool {
         let ty = self.world.lookup(id);
         match &ty.kind {
-            TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Enum(_) => false,
+            TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void | TypeKind::Enum(_) => false,
             TypeKind::Const(c) => self.view_needs_lifetime(c.ty),
             TypeKind::Bitfld(bitfld) => bitfld
                 .members
@@ -111,7 +123,7 @@ impl<'a> RustContext<'a> {
             TypeKind::FixedArray(fixed_array) => {
                 let elem = fixed_array.value_type;
                 match &self.world.lookup(elem).kind {
-                    TypeKind::Primitive(_) | TypeKind::Pack(_) => {
+                    TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Pack(_) => {
                         Some(&self.world.lookup(elem).kind)
                     }
                     TypeKind::Const(c) => match &self.world.lookup(c.ty).kind {
@@ -131,7 +143,7 @@ impl<'a> RustContext<'a> {
         let name = self.name_of(id);
 
         match &ty.kind {
-            TypeKind::Primitive(_) => name,
+            TypeKind::Bool | TypeKind::Primitive(_) => name,
             TypeKind::Void => "void".into(),
             TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Const(_) => {
                 name
@@ -149,7 +161,7 @@ impl<'a> RustContext<'a> {
     pub fn rust_write_decl_type(&self, id: TypeID, lifetime: &str) -> Result<String> {
         let ty = self.world.lookup(id);
         let out = match &ty.kind {
-            TypeKind::Primitive(_) => self.name_of(id),
+            TypeKind::Bool | TypeKind::Primitive(_) => self.name_of(id),
             TypeKind::Void => "()".into(),
             TypeKind::Enum(_) | TypeKind::Bitfld(_) | TypeKind::Pack(_) | TypeKind::Const(_) => {
                 self.name_of(id)

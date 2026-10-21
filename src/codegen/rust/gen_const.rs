@@ -14,12 +14,13 @@ pub fn emit_const(
     c: &Const,
 ) -> Result<()> {
     let name = ctx.name_of(id).to_ascii_uppercase();
-    if ctx.underlying_primitive(c.ty).is_none() {
+    if ctx.underlying_primitive(c.ty).is_none() && !ctx.is_bool(c.ty) {
         bail!("const {name} target must be primitive-compatible");
     };
     let ty_name = ctx.name_of(c.ty);
 
     let value = match c.value {
+        PrimitiveLiteral::Boolean(x) => x.to_string(),
         PrimitiveLiteral::Integer(x) => x.to_string(),
         PrimitiveLiteral::Real(x) => x.to_string(),
     };

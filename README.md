@@ -21,7 +21,12 @@ DSL Summary
 
 An example of the available features is provided in `assets/example.jaw`.
 
-- Primitives: `u8,u16,u32,u64,i8,i16,i32,i64,f32,f64`
+- Primitives: `bool,u8,u16,u32,u64,i8,i16,i32,i64,f32,f64`
+  - `bool` occupies one wire byte and accepts only `0` or `1` in ordinary values
+  - Boolean constants use the literals `true` and `false`
+  - Packed/POD booleans use a `WireBool` byte wrapper and validate when accessed, allowing packs to be forwarded without a recursive validation pass
+  - Bitfield members remain integer-valued; a one-bit member is still declared as `u8`
+  - `WireBool` is reserved for the generated packed representation
 - Pack (POD, packed, struct):
   - `pack Name` then members as `- field : Type`
   - Members must be POD (primitives, enums, packs, fixed arrays)

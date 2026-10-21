@@ -121,6 +121,7 @@ fn emit_pod_helpers(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &T
 fn pod_struct_format(ctx: &PythonContext, id: TypeID) -> Result<String> {
     let ty = ctx.world.lookup(id);
     match &ty.kind {
+        TypeKind::Bool => Ok("B".into()),
         TypeKind::Primitive(p) => Ok(map_primitive_fmt(*p)?.trim_start_matches('<').into()),
         TypeKind::Enum(enm) => pod_struct_format(ctx, enm.underlying),
         TypeKind::Bitfld(bitfield) => pod_struct_format(ctx, bitfield.underlying),
@@ -146,6 +147,7 @@ fn pod_struct_format(ctx: &PythonContext, id: TypeID) -> Result<String> {
 fn pod_decode_expr(ctx: &PythonContext, id: TypeID, values: &str) -> Result<String> {
     let ty = ctx.world.lookup(id);
     match &ty.kind {
+        TypeKind::Bool => Ok(format!("WireBool._from_raw(next({values}))")),
         TypeKind::Primitive(_) => Ok(format!("next({values})")),
         TypeKind::Enum(_) => Ok(format!("{}(next({values}))", ctx.name_of(id))),
         TypeKind::Bitfld(_) | TypeKind::Pack(_) => {
@@ -179,6 +181,7 @@ fn emit_pod_encode(
 ) -> Result<()> {
     let ty = ctx.world.lookup(id);
     match &ty.kind {
+        TypeKind::Bool => out.wln(&format!("{values}.append({value}._raw)")),
         TypeKind::Primitive(_) => out.wln(&format!("{values}.append({value})")),
         TypeKind::Enum(_) => out.wln(&format!("{values}.append({value}.raw)")),
         TypeKind::Bitfld(_) | TypeKind::Pack(_) => {
@@ -234,6 +237,10 @@ impl<'a> PythonContext<'a> {
         matches!(self.world.lookup(id).kind, TypeKind::Void)
     }
 
+    fn is_bool(&self, id: TypeID) -> bool {
+        matches!(self.world.lookup(id).kind, TypeKind::Bool)
+    }
+
     /// Returns the primitive for a type if it is directly primitive (after alias resolution).
     fn direct_primitive(&self, id: TypeID) -> Option<Primitive> {
         match self.world.lookup(id).kind {
@@ -258,6 +265,7 @@ impl<'a> PythonContext<'a> {
     fn type_hint(&self, id: TypeID) -> Result<String> {
         let ty = self.world.lookup(id);
         let hint = match &ty.kind {
+            TypeKind::Bool => "bool".to_string(),
             TypeKind::Primitive(p) => match p.dtype {
                 Datatype::Float => "float".to_string(),
                 Datatype::Integer => "int".to_string(),
@@ -324,6 +332,51 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
     out.wln("_DATACLASS_SLOTS = {'slots': True} if sys.version_info >= (3, 10) else {}");
     out.newline();
 
+    if context.world.uses_wire_bool() {
+        out.wln("class WireBool:");
+        {
+            let mut idt = out.indent();
+            idt.wln("__slots__ = ('_raw',)");
+            idt.wln("def __init__(self, value: bool):");
+            {
+                let mut body = idt.indent();
+                body.wln("if type(value) is not bool: raise TypeError('WireBool requires bool')");
+                body.wln("self._raw = 1 if value else 0");
+            }
+            idt.wln("@classmethod");
+            idt.wln("def _from_raw(cls, raw):");
+            {
+                let mut body = idt.indent();
+                body.wln("value = cls.__new__(cls)");
+                body.wln("value._raw = int(raw)");
+                body.wln("return value");
+            }
+            idt.wln("def get(self) -> bool:");
+            {
+                let mut body = idt.indent();
+                body.wln("if self._raw == 0: return False");
+                body.wln("if self._raw == 1: return True");
+                body.wln("raise ValueError(f'invalid boolean byte: {self._raw}')");
+            }
+            idt.wln("def __bool__(self):");
+            {
+                let mut body = idt.indent();
+                body.wln("return self.get()");
+            }
+            idt.wln("def __repr__(self):");
+            {
+                let mut body = idt.indent();
+                body.wln("return f'WireBool({self.get()!r})' if self._raw in (0, 1) else f'WireBool(raw={self._raw})'");
+            }
+            idt.wln("def __eq__(self, other):");
+            {
+                let mut body = idt.indent();
+                body.wln("return isinstance(other, WireBool) and self._raw == other._raw");
+            }
+        }
+        out.newline();
+    }
+
     out.wln("class Reader:");
     {
         let mut idt = out.indent();
@@ -374,6 +427,16 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             body.wln("self._pos = end");
             body.wln("return value");
         }
+        if context.world.uses_bool() {
+            idt.wln("def read_bool(self):");
+            {
+                let mut body = idt.indent();
+                body.wln("value = self.read_u8()");
+                body.wln("if value == 0: return False");
+                body.wln("if value == 1: return True");
+                body.wln("raise ValueError(f'invalid boolean byte: {value}')");
+            }
+        }
     }
     out.newline();
 
@@ -415,6 +478,14 @@ fn emit_preamble<'a>(context: &PythonContext<'a>, out: &mut impl Sink) {
             idt.wln(&format!("def {method}(self, value):"));
             let mut body = idt.indent();
             body.wln(&format!("self._out.extend({codec}.pack(value))"));
+        }
+        if context.world.uses_bool() {
+            idt.wln("def write_bool(self, value):");
+            {
+                let mut body = idt.indent();
+                body.wln("if type(value) is not bool: raise TypeError('expected bool')");
+                body.wln("self.write_u8(1 if value else 0)");
+            }
         }
     }
     out.newline();
@@ -516,7 +587,11 @@ fn emit_type_definition(
             {
                 let mut idt = out.indent();
                 for m in &pack.members {
-                    let hint = ctx.type_hint(m.ty)?;
+                    let hint = if ctx.is_bool(m.ty) {
+                        "WireBool".into()
+                    } else {
+                        ctx.type_hint(m.ty)?
+                    };
                     idt.wln(&format!("{}: {}", sanitize(&m.name), hint));
                 }
             }
@@ -591,6 +666,13 @@ fn emit_type_definition(
             let hint = ctx.type_hint(c.ty)?;
 
             let value = match c.value {
+                crate::compile::PrimitiveLiteral::Boolean(v) => {
+                    if v {
+                        "True".into()
+                    } else {
+                        "False".into()
+                    }
+                }
                 crate::compile::PrimitiveLiteral::Integer(v) => v.to_string(),
                 crate::compile::PrimitiveLiteral::Real(v) => v.to_string(),
             };
@@ -598,7 +680,7 @@ fn emit_type_definition(
             out.wln(&format!("{name} : {hint} = {value}"));
             out.newline();
         }
-        TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     Ok(())
@@ -697,7 +779,15 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
                     "if count > {guard_byte_size}: raise ValueError('array too large')"
                 ));
             }
-            if let Some(p) = ctx.direct_primitive(arr.value_type) {
+            if ctx.is_bool(arr.value_type) {
+                idt.wln("out = []");
+                idt.wln("for _ in range(int(count)):");
+                {
+                    let mut body = idt.indent();
+                    body.wln("out.append(reader.read_bool())");
+                }
+                idt.wln("return out");
+            } else if let Some(p) = ctx.direct_primitive(arr.value_type) {
                 let codec = primitive_codec(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
@@ -718,7 +808,12 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
         TypeKind::FixedArray(arr) => {
             out.wln(&format!("def read_{name}(reader):"));
             let mut idt = out.indent();
-            if let Some(p) = ctx.direct_primitive(arr.value_type) {
+            if ctx.is_bool(arr.value_type) {
+                idt.wln(&format!(
+                    "return [WireBool._from_raw(v) for v in reader.read_bytes({})]",
+                    arr.count
+                ));
+            } else if let Some(p) = ctx.direct_primitive(arr.value_type) {
                 let codec = primitive_codec(p)?;
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
@@ -737,7 +832,7 @@ fn emit_read_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Typ
             }
             idt.newline();
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
 
     Ok(())
@@ -825,7 +920,11 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             ));
             let size_write = write_primitive_method(ctx, arr.size_type)?;
             idt.wln(&format!("writer.{size_write}(len(values))"));
-            if let Some(p) = ctx.direct_primitive(arr.value_type) {
+            if ctx.is_bool(arr.value_type) {
+                idt.wln("for item in values:");
+                let mut body = idt.indent();
+                body.wln("writer.write_bool(item)");
+            } else if let Some(p) = ctx.direct_primitive(arr.value_type) {
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
                     "_write_primitive_array(writer, '{typecode}', values)"
@@ -840,7 +939,13 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
         TypeKind::FixedArray(arr) => {
             out.wln(&format!("def write_{name}(writer, values):"));
             let mut idt = out.indent();
-            if let Some(p) = ctx.direct_primitive(arr.value_type) {
+            if ctx.is_bool(arr.value_type) {
+                idt.wln(&format!(
+                    "if len(values) != {}: raise ValueError('expected {} items')",
+                    arr.count, arr.count
+                ));
+                idt.wln("writer.write_bytes(bytes(value._raw for value in values))");
+            } else if let Some(p) = ctx.direct_primitive(arr.value_type) {
                 let typecode = map_typecode(p)?;
                 idt.wln(&format!(
                     "if len(values) != {}: raise ValueError('expected {} items')",
@@ -860,7 +965,7 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
             }
             idt.newline();
         }
-        TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
+        TypeKind::Bool | TypeKind::Const(_) | TypeKind::Primitive(_) | TypeKind::Void => {}
     }
     Ok(())
 }
@@ -869,6 +974,7 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
 fn read_expr(ctx: &PythonContext, id: TypeID, reader_ident: &str) -> Result<String> {
     let ty = ctx.world.lookup(id);
     let expr = match &ty.kind {
+        TypeKind::Bool => format!("{reader_ident}.read_bool()"),
         TypeKind::Primitive(p) => {
             let method = read_primitive_method_direct(*p)?;
             format!("{reader_ident}.{method}()")
@@ -888,6 +994,7 @@ fn write_value(
 ) -> Result<()> {
     let ty = ctx.world.lookup(id);
     match &ty.kind {
+        TypeKind::Bool => out.wln(&format!("writer.write_bool({value_expr})")),
         TypeKind::Primitive(p) => {
             let method = write_primitive_method_direct(*p)?;
             out.wln(&format!("writer.{method}({})", value_expr));

@@ -112,6 +112,19 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
 
         let mut defs: HashMap<_, _> = names.into_iter().map(|x| (x.1, x.2)).collect();
 
+        let bool_name = TypeName::from_string(builtin_defined_at.clone(), "bool").unwrap();
+        let bool_tid = allocator.next();
+        name_to_id.insert(bool_name.clone(), bool_tid);
+        name_to_location.insert(bool_name.clone(), builtin_defined_at.clone());
+        defs.insert(
+            bool_tid,
+            Type {
+                ident: bool_name,
+                defined_at: builtin_defined_at.clone(),
+                kind: TypeKind::Bool,
+            },
+        );
+
         let void_name = TypeName::from_string(builtin_defined_at, "void").unwrap();
         let void_tid = allocator.next();
         let void_defined_at = SourceLocation::new(
@@ -134,6 +147,13 @@ pub fn compile(module: Module) -> anyhow::Result<World> {
     };
 
     for def in module.definitions.iter() {
+        if def.ident.as_str() == "WireBool" {
+            bail!(
+                "type name {} at {} is reserved for generated boolean storage",
+                def.ident,
+                def.defined_at
+            );
+        }
         if let Some(prev) = name_to_location.get(&def.ident) {
             bail!(
                 "duplicate type name {} defined at {} (previously defined at {})",
