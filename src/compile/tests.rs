@@ -329,13 +329,17 @@ fn variant_rules_are_enforced() {
 fn empty_declarations_are_rejected() {
     for (source, expected) in [
         ("pack Empty\n", "pack declarations"),
-        ("seq Empty\n", "sequence declarations"),
         ("enum Empty : u8\n", "enum declarations"),
         ("bits Empty : u8\n", "bitfield declarations"),
         ("variant Empty : u8\n", "variant declarations"),
     ] {
         assert_compile_err_contains(source, expected);
     }
+}
+
+#[test]
+fn empty_sequences_are_allowed() {
+    compile_src("seq Empty\n").expect("empty sequences should compile");
 }
 
 /// Test: arrays validate length/count and element constraints.

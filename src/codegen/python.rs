@@ -527,9 +527,13 @@ fn emit_type_definition(
             out.wln(&format!("class {name}:"));
             {
                 let mut idt = out.indent();
-                for m in &seq.members {
-                    let hint = ctx.type_hint(m.ty)?;
-                    idt.wln(&format!("{}: {}", sanitize(&m.name), hint));
+                if seq.members.is_empty() {
+                    idt.wln("pass");
+                } else {
+                    for m in &seq.members {
+                        let hint = ctx.type_hint(m.ty)?;
+                        idt.wln(&format!("{}: {}", sanitize(&m.name), hint));
+                    }
                 }
             }
             out.newline();
@@ -801,8 +805,12 @@ fn emit_write_impl(ctx: &PythonContext, out: &mut impl Sink, id: TypeID, ty: &Ty
         TypeKind::Sequence(seq) => {
             out.wln(&format!("def write_{name}(writer, value):"));
             let mut idt = out.indent();
-            for m in &seq.members {
-                write_value(ctx, &mut idt, m.ty, &format!("value.{}", sanitize(&m.name)))?;
+            if seq.members.is_empty() {
+                idt.wln("return");
+            } else {
+                for m in &seq.members {
+                    write_value(ctx, &mut idt, m.ty, &format!("value.{}", sanitize(&m.name)))?;
+                }
             }
             idt.newline();
         }

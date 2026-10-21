@@ -313,10 +313,6 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
 fn verify_sequence(world: &World, ty: &Type, value: &Sequence) -> anyhow::Result<()> {
     let ctx = || format!("while verifying sequence {}", Typeref::from(ty));
 
-    if value.members.is_empty() {
-        bail!("sequence declarations must contain at least one member");
-    }
-
     verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
 
     for member in &value.members {

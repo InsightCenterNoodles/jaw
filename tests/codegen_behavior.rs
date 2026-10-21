@@ -282,3 +282,35 @@ const BYTE : u8 = 10
     );
     let _ = fs::remove_file(&cpp_out);
 }
+
+#[test]
+fn empty_sequences_are_named_zero_wire_types_in_all_generators() {
+    let world = world_from("seq Empty\n");
+
+    let rust_out = temp_path("rust_empty_seq", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+    assert!(rust_src.contains("pub struct Empty;"));
+    assert!(rust_src.contains("pub struct EmptyView;"));
+    assert!(rust_src.contains("Ok(Empty)"));
+    assert!(rust_src.contains("impl JawWrite for Empty"));
+    let _ = fs::remove_file(&rust_out);
+
+    let python_out = temp_path("python_empty_seq", "py");
+    codegen::emit_python(&world, &Default::default(), &python_out).expect("emit python");
+    let python_src = fs::read_to_string(&python_out).expect("read python output");
+    assert!(python_src.contains("class Empty:\n    pass"));
+    assert!(python_src.contains("def read_Empty(reader):\n    return Empty("));
+    assert!(python_src.contains("def write_Empty(writer, value):\n    return"));
+    let _ = fs::remove_file(&python_out);
+
+    let cpp_out = temp_path("cpp_empty_seq", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+    assert!(cpp_src.contains("struct EmptyReader"));
+    assert!(cpp_src.contains("struct EmptyWriter"));
+    assert!(cpp_src.contains("read(Reader& reader, EmptyReader& value)"));
+    assert!(cpp_src.contains("write(Writer& writer, EmptyWriter const& value)"));
+    assert_eq!(cpp_src.matches("return true;").count(), 2);
+    let _ = fs::remove_file(&cpp_out);
+}

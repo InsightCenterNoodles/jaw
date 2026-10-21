@@ -20,7 +20,10 @@ pub fn emit_seq(
 
     let view_type = ctx.rust_view_type(id);
 
-    {
+    if sequence.members.is_empty() {
+        out.wln("#[derive(Debug, Clone, PartialEq)]");
+        out.wln(&format!("pub struct {name};"));
+    } else {
         out.wln("#[derive(Debug, Clone, PartialEq)]");
         out.wln(&format!("pub struct {name}"));
         {
@@ -32,7 +35,11 @@ pub fn emit_seq(
         }
     }
 
-    {
+    if sequence.members.is_empty() {
+        out.wln("#[derive(Debug, PartialEq)]");
+        out.wln(&format!("pub struct {view_type};"));
+        out.newline();
+    } else {
         let lt = if ctx.view_needs_lifetime(id) {
             "<'a>"
         } else {
@@ -68,14 +75,18 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, sequence: &Sequenc
             let expr = read_expr(ctx, m.ty);
             idt.wln(&format!("let {} = {expr};", m.name));
         }
-        idt.wln(&format!("Ok({name}"));
-        {
-            let mut body = idt.indent();
-            for m in &sequence.members {
-                body.wln(&format!("{},", m.name));
+        if sequence.members.is_empty() {
+            idt.wln(&format!("Ok({name})"));
+        } else {
+            idt.wln(&format!("Ok({name}"));
+            {
+                let mut body = idt.indent();
+                for m in &sequence.members {
+                    body.wln(&format!("{},", m.name));
+                }
             }
+            idt.wln(")");
         }
-        idt.wln(")");
         Ok(())
     })
 }
