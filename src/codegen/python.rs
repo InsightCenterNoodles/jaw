@@ -1171,5 +1171,53 @@ fn sanitize<S: AsRef<str>>(s: S) -> String {
         }
         out.push(ch);
     }
-    if out.is_empty() { "_t".into() } else { out }
+    if out.is_empty() {
+        return "_t".into();
+    }
+
+    if is_python_keyword(&out) {
+        out.push('_');
+    }
+    out
+}
+
+fn is_python_keyword(ident: &str) -> bool {
+    matches!(
+        ident,
+        "False"
+            | "None"
+            | "True"
+            | "and"
+            | "as"
+            | "assert"
+            | "async"
+            | "await"
+            | "break"
+            | "class"
+            | "continue"
+            | "def"
+            | "del"
+            | "elif"
+            | "else"
+            | "except"
+            | "finally"
+            | "for"
+            | "from"
+            | "global"
+            | "if"
+            | "import"
+            | "in"
+            | "is"
+            | "lambda"
+            | "nonlocal"
+            | "not"
+            | "or"
+            | "pass"
+            | "raise"
+            | "return"
+            | "try"
+            | "while"
+            | "with"
+            | "yield"
+    )
 }

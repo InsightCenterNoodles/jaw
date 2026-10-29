@@ -170,7 +170,7 @@ fn emit_setter(ctx: &RustContext, out: &mut impl Sink, m: &BitfldMember, base: &
         let mask = (1u128 << width) - 1;
 
         if matches!(ctx.lookup(m.underlying).kind, TypeKind::Enum(_)) {
-            idt.wln("let v = v.raw();");
+            idt.wln(&format!("let v = v.raw() as {base};"));
         } else {
             idt.wln(&format!("let v = v as {base};"));
         }

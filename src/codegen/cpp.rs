@@ -386,24 +386,20 @@ fn emit_namespace_fwd(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> a
     {
         let mut block = out.indent();
 
-        // First emit forward declarations for concrete types so aliases can reference them.
+        // First emit forward declarations for nominal types so aliases can reference them.
         for (id, ty) in ctx.types() {
             if matches!(
                 ty.kind,
-                TypeKind::Primitive(_)
-                    | TypeKind::Bool
-                    | TypeKind::Void
-                    | TypeKind::DynamicArray(_)
-                    | TypeKind::FixedArray(_)
+                TypeKind::Primitive(_) | TypeKind::Bool | TypeKind::Void | TypeKind::FixedArray(_)
             ) {
                 continue;
             }
             emit_type_def_fwd(ctx, &mut block, id, ty, ns)?;
         }
 
-        // Then emit alias-like type definitions (including arrays) after the forward decls.
+        // Then emit fixed-array aliases after the forward declarations.
         for (id, ty) in ctx.types() {
-            if !matches!(ty.kind, TypeKind::DynamicArray(_) | TypeKind::FixedArray(_)) {
+            if !matches!(ty.kind, TypeKind::FixedArray(_)) {
                 continue;
             }
             emit_type_def_fwd(ctx, &mut block, id, ty, ns)?;
@@ -493,21 +489,7 @@ fn emit_type_def_fwd(
         TypeKind::Sequence(_) => {
             out.wln(&format!("struct {};", name));
         }
-        TypeKind::DynamicArray(arr) => {
-            let value_ty = ctx.cpp_type(arr.value_type, ns)?;
-            match ns {
-                Namespace::Read => {
-                    if ctx.can_bulk_array(id) {
-                        out.wln(&format!("using {} = ArrayRef<{}>;", name, value_ty));
-                    } else {
-                        out.wln(&format!("using {} = std::vector<{}>;", name, value_ty));
-                    }
-                }
-                Namespace::Write => {
-                    out.wln(&format!("using {} = std::span<{}>;", name, value_ty));
-                }
-            }
-        }
+        TypeKind::DynamicArray(_) => out.wln(&format!("struct {};", name)),
         TypeKind::FixedArray(arr) => {
             let value_ty = ctx.cpp_pod_type(arr.value_type, ns)?;
 
@@ -681,18 +663,29 @@ fn emit_type_def(
         }
         TypeKind::DynamicArray(arr) => {
             let value_ty = ctx.cpp_type(arr.value_type, ns)?;
-            match ns {
+            let base = match ns {
                 Namespace::Read => {
                     if ctx.can_bulk_array(id) {
-                        out.wln(&format!("using {} = ArrayRef<{}>;", name, value_ty));
+                        format!("ArrayRef<{}>", value_ty)
                     } else {
-                        out.wln(&format!("using {} = std::vector<{}>;", name, value_ty));
+                        format!("std::vector<{}>", value_ty)
                     }
                 }
-                Namespace::Write => {
-                    out.wln(&format!("using {} = std::span<{}>;", name, value_ty));
-                }
+                Namespace::Write => format!("std::span<{}>", value_ty),
+            };
+
+            out.wln(&format!("struct {} : {}", name, base));
+            {
+                let mut idt = out.indent();
+                idt.wln(&format!("using Base = {};", base));
+                idt.wln("using Base::Base;");
+                idt.wln("using Base::operator=;");
+                idt.wln(&format!(
+                    "{}(Base value) : Base(std::move(value)) {{}}",
+                    name
+                ));
             }
+            out.wln(";");
         }
         TypeKind::FixedArray(arr) => {
             let value_ty = ctx.cpp_pod_type(arr.value_type, ns)?;

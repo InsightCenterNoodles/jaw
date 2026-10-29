@@ -395,3 +395,79 @@ fn empty_sequences_are_named_zero_wire_types_in_all_generators() {
     assert_eq!(cpp_src.matches("return true;").count(), 2);
     let _ = fs::remove_file(&cpp_out);
 }
+
+#[test]
+fn rust_bitfield_setters_widen_member_values_before_masking() {
+    let world = world_from(
+        r#"
+enum Small : u8
+- Value = 1
+
+bits Wide : u32
+- 0-7 primitive : u8
+- 8-15 enumeration : Small
+"#,
+    );
+
+    let rust_out = temp_path("rust_bitfield_widen", "rs");
+    codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
+    let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
+
+    assert!(rust_src.contains("let v = v as u32;"));
+    assert!(rust_src.contains("let v = v.raw() as u32;"));
+
+    let _ = fs::remove_file(&rust_out);
+}
+
+#[test]
+fn cpp_dynamic_arrays_are_nominal_types() {
+    let world = world_from(
+        r#"
+dyn_array AnyString : u32 * u8
+dyn_array AnyBytes : u32 * u8
+
+variant Any : u8
+- 1 => AnyString
+- 2 => AnyBytes
+"#,
+    );
+
+    let cpp_out = temp_path("cpp_nominal_arrays", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit cpp");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read cpp output");
+
+    assert!(cpp_src.contains("struct AnyStringReader : ArrayRef<std::uint8_t>"));
+    assert!(cpp_src.contains("struct AnyBytesReader : ArrayRef<std::uint8_t>"));
+    assert!(cpp_src.contains("struct AnyStringWriter : std::span<std::uint8_t>"));
+    assert!(cpp_src.contains("struct AnyBytesWriter : std::span<std::uint8_t>"));
+    assert!(cpp_src.contains("AnyStringWriter(Base value) : Base(std::move(value)) {}"));
+    assert!(cpp_src.contains("struct AnyReader : std::variant<AnyStringReader, AnyBytesReader>"));
+    assert!(!cpp_src.contains("using AnyStringReader ="));
+
+    let _ = fs::remove_file(&cpp_out);
+}
+
+#[test]
+fn python_escapes_keyword_identifiers() {
+    let world = world_from(
+        r#"
+enum Optional : u8
+- None = 0
+- Value = 1
+
+seq Message
+- class : Optional
+"#,
+    );
+
+    let python_out = temp_path("python_keywords", "py");
+    codegen::emit_python(&world, &Default::default(), &python_out).expect("emit python");
+    let python_src = fs::read_to_string(&python_out).expect("read python output");
+
+    assert!(python_src.contains("None_ = 0"));
+    assert!(python_src.contains("Optional.None_ = Optional(0)"));
+    assert!(python_src.contains("class_: Optional"));
+    assert!(!python_src.contains("\n    None = 0"));
+
+    let _ = fs::remove_file(&python_out);
+}
