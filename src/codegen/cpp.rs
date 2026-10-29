@@ -437,6 +437,17 @@ fn emit_namespace(ctx: &CppContext, out: &mut impl Sink, ns: Namespace) -> anyho
 
         block.newline();
 
+        // Dynamic arrays may be emitted before their element types to support
+        // recursive schemas. Define constructors that own a base container only
+        // after every concrete type in this namespace is complete.
+        for (id, ty) in ctx.types() {
+            if matches!(ty.kind, TypeKind::DynamicArray(_)) {
+                emit_dynamic_array_constructor(ctx, &mut block, id, ns);
+            }
+        }
+
+        block.newline();
+
         for (_, ty) in ctx.types() {
             if matches!(
                 ty.kind,
@@ -680,10 +691,7 @@ fn emit_type_def(
                 idt.wln(&format!("using Base = {};", base));
                 idt.wln("using Base::Base;");
                 idt.wln("using Base::operator=;");
-                idt.wln(&format!(
-                    "{}(Base value) : Base(std::move(value)) {{}}",
-                    name
-                ));
+                idt.wln(&format!("{}(Base value);", name));
             }
             out.wln(";");
         }
@@ -701,6 +709,19 @@ fn emit_type_def(
     out.newline();
 
     Ok(())
+}
+
+/// Defines a dynamic-array base conversion after all element types are complete.
+fn emit_dynamic_array_constructor(
+    ctx: &CppContext,
+    out: &mut impl Sink,
+    id: TypeID,
+    ns: Namespace,
+) {
+    let name = ctx.name_of(id, ns);
+    out.wln(&format!(
+        "inline {name}::{name}(Base value) : Base(std::move(value)) {{}}"
+    ));
 }
 
 /// Emits any additional forward declarations needed by a type definition.

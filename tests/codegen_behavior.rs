@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jaw::{GlobalOptions, codegen, compile, intermediate};
@@ -20,6 +21,30 @@ fn temp_path(name: &str, ext: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     dir.join(format!("{name}_{nanos}.{ext}"))
+}
+
+fn assert_cpp_header_compiles(path: &PathBuf) {
+    let compiler = std::env::var_os("CXX").unwrap_or_else(|| "c++".into());
+    let available = Command::new(&compiler)
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !available {
+        eprintln!("skipping C++ syntax check: compiler not found");
+        return;
+    }
+
+    let output = Command::new(compiler)
+        .args(["-std=c++20", "-fsyntax-only", "-x", "c++"])
+        .arg(path)
+        .output()
+        .expect("run C++ compiler");
+    assert!(
+        output.status.success(),
+        "generated C++ header failed to compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -425,6 +450,10 @@ fn cpp_dynamic_arrays_are_nominal_types() {
         r#"
 dyn_array AnyString : u32 * u8
 dyn_array AnyBytes : u32 * u8
+dyn_array NodeList : u32 * Node
+
+seq Node
+- children : NodeList
 
 variant Any : u8
 - 1 => AnyString
@@ -440,9 +469,13 @@ variant Any : u8
     assert!(cpp_src.contains("struct AnyBytesReader : ArrayRef<std::uint8_t>"));
     assert!(cpp_src.contains("struct AnyStringWriter : std::span<std::uint8_t>"));
     assert!(cpp_src.contains("struct AnyBytesWriter : std::span<std::uint8_t>"));
-    assert!(cpp_src.contains("AnyStringWriter(Base value) : Base(std::move(value)) {}"));
+    assert!(cpp_src.contains("AnyStringWriter(Base value);"));
+    assert!(cpp_src.contains(
+        "inline AnyStringWriter::AnyStringWriter(Base value) : Base(std::move(value)) {}"
+    ));
     assert!(cpp_src.contains("struct AnyReader : std::variant<AnyStringReader, AnyBytesReader>"));
     assert!(!cpp_src.contains("using AnyStringReader ="));
+    assert_cpp_header_compiles(&cpp_out);
 
     let _ = fs::remove_file(&cpp_out);
 }
