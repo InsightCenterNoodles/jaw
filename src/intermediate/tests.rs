@@ -577,3 +577,56 @@ seq Local
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Test: multiple roots share one import graph and include common definitions once.
+#[test]
+fn multiple_roots_deduplicate_shared_imports() {
+    let dir = unique_test_dir("multiple_roots");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let common_path = dir.join("common.jaw");
+    let first_path = dir.join("first.jaw");
+    let second_path = dir.join("second.jaw");
+
+    std::fs::write(
+        &common_path,
+        r#"
+pack Common
+- value : u16
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &first_path,
+        r#"
+from "common.jaw" use {Common}
+
+seq First
+- value : Common
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &second_path,
+        r#"
+from "common.jaw" use {Common}
+
+seq Second
+- value : Common
+"#,
+    )
+    .unwrap();
+
+    let module = load_modules_with_imports(&[first_path, second_path]).unwrap();
+    let names: Vec<&str> = module
+        .definitions
+        .iter()
+        .map(|def| def.ident.as_str())
+        .collect();
+
+    assert_eq!(names, ["First", "Second", "Common"]);
+    assert_eq!(names.iter().filter(|name| **name == "Common").count(), 1);
+    crate::compile::compile(module).expect("combined module should compile");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

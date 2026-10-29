@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use jaw::{GlobalOptions, codegen, compile};
 
@@ -35,30 +35,9 @@ use std::process::ExitCode;
 fn process() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
-    let mut world: Option<compile::World> = None;
-
-    for input in args.inputs {
-        let file_stem = input
-            .file_stem()
-            .and_then(|x| x.to_str())
-            .unwrap_or("module")
-            .to_string();
-
-        let module = jaw::intermediate::load_module_with_imports(&input)
-            .with_context(|| format!("while loading module {file_stem}"))?;
-
-        let this_world = jaw::compile::compile(module)?;
-
-        if let Some(w) = world {
-            world = Some(w.merge(this_world)?)
-        } else {
-            world = Some(this_world);
-        }
-    }
-
-    let Some(world) = world else {
-        bail!("At least one module is required");
-    };
+    let module = jaw::intermediate::load_modules_with_imports(&args.inputs)
+        .context("while loading input modules")?;
+    let world = compile::compile(module)?;
 
     match args.kind {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,

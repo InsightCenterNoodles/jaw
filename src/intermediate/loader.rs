@@ -1,5 +1,6 @@
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, bail};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
@@ -8,32 +9,65 @@ use super::ast::{Module, Type, TypeKind, TypeName};
 
 /// Loads a root module from disk, resolves imports, and returns a merged module.
 pub fn load_module_with_imports(path: impl AsRef<Path>) -> anyhow::Result<Module> {
-    let root_path = std::fs::canonicalize(path.as_ref())
-        .with_context(|| format!("while resolving {}", path.as_ref().display()))?;
+    load_modules_with_imports(std::slice::from_ref(&path))
+}
+
+/// Loads multiple root modules and their imports into one merged module.
+///
+/// All roots share a single module graph, so a file imported by more than one
+/// root is parsed and included only once.
+pub fn load_modules_with_imports<P: AsRef<Path>>(paths: &[P]) -> anyhow::Result<Module> {
+    if paths.is_empty() {
+        bail!("at least one root module is required");
+    }
+
+    let mut root_paths = Vec::with_capacity(paths.len());
+    let mut seen_roots = HashSet::new();
+    for path in paths {
+        let root_path = std::fs::canonicalize(path.as_ref())
+            .with_context(|| format!("while resolving {}", path.as_ref().display()))?;
+        if seen_roots.insert(root_path.clone()) {
+            root_paths.push(root_path);
+        }
+    }
 
     let mut modules = HashMap::new();
     let mut visiting = HashSet::new();
 
-    // Import modules used in this module
-    load_modules_recursive(&root_path, &mut modules, &mut visiting)?;
+    for root_path in &root_paths {
+        load_modules_recursive(root_path, &mut modules, &mut visiting)
+            .with_context(|| format!("while loading root {}", root_path.display()))?;
+    }
 
     let mut module_entries: Vec<(PathBuf, Module)> = modules.into_iter().collect();
 
-    module_entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let root_index = module_entries
+    let root_order: HashMap<&Path, usize> = root_paths
         .iter()
-        .position(|(path, _)| *path == root_path)
-        .ok_or_else(|| anyhow!("root module missing after load"))?;
-
-    if root_index != 0 {
-        let root = module_entries.remove(root_index);
-        module_entries.insert(0, root);
-    }
+        .enumerate()
+        .map(|(idx, path)| (path.as_path(), idx))
+        .collect();
+    module_entries.sort_by(|a, b| {
+        let a_order = root_order.get(a.0.as_path());
+        let b_order = root_order.get(b.0.as_path());
+        match (a_order, b_order) {
+            (Some(a_order), Some(b_order)) => a_order.cmp(b_order),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
 
     let root_name = module_entries[0].1.name.clone();
     let root_source = module_entries[0].1.source.clone();
-    let root_imports = module_entries[0].1.imports.clone();
+    let root_imports = root_paths
+        .iter()
+        .filter_map(|path| {
+            module_entries
+                .iter()
+                .find(|(module_path, _)| module_path == path)
+        })
+        .flat_map(|(_, module)| module.imports.iter().cloned())
+        .collect();
 
     let mut path_to_module = HashMap::new();
     for (idx, (path, _)) in module_entries.iter().enumerate() {
@@ -62,69 +96,76 @@ pub fn load_module_with_imports(path: impl AsRef<Path>) -> anyhow::Result<Module
         }
     }
 
-    let mut explicit_imports = HashSet::new();
-    let root_dir = root_path.parent().unwrap_or(Path::new("."));
-    for imp in &root_imports {
-        let resolved = resolve_import_path(root_dir, &imp.path);
-        let resolved = std::fs::canonicalize(&resolved)
-            .with_context(|| format!("while resolving import {}", imp.path))?;
-        let Some(&module_idx) = path_to_module.get(&resolved) else {
-            bail!(
-                "import {} at {} could not be resolved",
-                imp.path,
-                imp.defined_at
-            );
-        };
+    let mut allowed = HashSet::new();
+    for root_path in &root_paths {
+        let root_idx = path_to_module[root_path];
+        let root_module = &module_entries[root_idx].1;
+        let mut explicit_imports = HashSet::new();
+        let root_dir = root_path.parent().unwrap_or(Path::new("."));
 
-        if imp.import_all {
-            for def in &module_entries[module_idx].1.definitions {
-                explicit_imports.insert(def.ident.clone());
-            }
-            continue;
-        }
+        for imp in &root_module.imports {
+            let resolved = resolve_import_path(root_dir, &imp.path);
+            let resolved = std::fs::canonicalize(&resolved)
+                .with_context(|| format!("while resolving import {}", imp.path))?;
+            let Some(&module_idx) = path_to_module.get(&resolved) else {
+                bail!(
+                    "import {} at {} could not be resolved",
+                    imp.path,
+                    imp.defined_at
+                );
+            };
 
-        for ty in &imp.types {
-            match index.get(ty) {
-                Some((ty_mod_idx, _)) if *ty_mod_idx == module_idx => {
-                    explicit_imports.insert(ty.clone());
+            if imp.import_all {
+                for def in &module_entries[module_idx].1.definitions {
+                    explicit_imports.insert(def.ident.clone());
                 }
-                Some((_, _)) => {
-                    bail!(
-                        "imported type {} at {} is defined in a different module",
-                        ty,
-                        imp.defined_at
-                    );
-                }
-                None => {
-                    bail!("imported type {} at {} does not exist", ty, imp.defined_at);
-                }
-            }
-        }
-    }
-
-    let import_closure = dependency_closure(&explicit_imports, &module_entries, &index);
-
-    let mut root_types = HashSet::new();
-    for def in &module_entries[0].1.definitions {
-        root_types.insert(def.ident.clone());
-    }
-
-    for def in &module_entries[0].1.definitions {
-        for dep in direct_dependencies(def) {
-            if root_types.contains(&dep) || import_closure.contains(&dep) || is_builtin(&dep) {
                 continue;
             }
-            bail!(
-                "type {} used by {} at {} must be imported",
-                dep,
-                def.ident,
-                def.defined_at
-            );
-        }
-    }
 
-    let mut allowed = root_types;
-    allowed.extend(import_closure);
+            for ty in &imp.types {
+                match index.get(ty) {
+                    Some((ty_mod_idx, _)) if *ty_mod_idx == module_idx => {
+                        explicit_imports.insert(ty.clone());
+                    }
+                    Some((_, _)) => {
+                        bail!(
+                            "imported type {} at {} is defined in a different module",
+                            ty,
+                            imp.defined_at
+                        );
+                    }
+                    None => {
+                        bail!("imported type {} at {} does not exist", ty, imp.defined_at);
+                    }
+                }
+            }
+        }
+
+        let import_closure = dependency_closure(&explicit_imports, &module_entries, &index);
+
+        let root_types: HashSet<_> = root_module
+            .definitions
+            .iter()
+            .map(|def| def.ident.clone())
+            .collect();
+
+        for def in &root_module.definitions {
+            for dep in direct_dependencies(def) {
+                if root_types.contains(&dep) || import_closure.contains(&dep) || is_builtin(&dep) {
+                    continue;
+                }
+                bail!(
+                    "type {} used by {} at {} must be imported",
+                    dep,
+                    def.ident,
+                    def.defined_at
+                );
+            }
+        }
+
+        allowed.extend(root_types);
+        allowed.extend(import_closure);
+    }
 
     let mut seen = HashSet::new();
     let mut definitions = Vec::new();

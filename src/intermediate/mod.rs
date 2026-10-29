@@ -12,5 +12,5 @@ pub use ast::{
     ReservedRange, Sequence, StructMember, Type, TypeKind, TypeName, Variant, VariantMember,
 };
 pub use error::IntermediateError;
-pub use loader::load_module_with_imports;
+pub use loader::{load_module_with_imports, load_modules_with_imports};
 pub use source::{Position, SourceCode, SourceLocation};
