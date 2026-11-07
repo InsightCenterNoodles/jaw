@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
@@ -114,6 +114,50 @@ impl<'a> CppContext<'a> {
 
     fn is_bool(&self, id: TypeID) -> bool {
         matches!(self.world.lookup(id).kind, TypeKind::Bool)
+    }
+
+    /// Returns whether `start` transitively refers to `target`, including
+    /// through dynamic arrays. Those indirections are intentionally omitted
+    /// from layout sorting, but matter when a named variant wrapper would
+    /// otherwise value-initialize a recursive payload before the variant type
+    /// is complete.
+    fn references_type(&self, start: TypeID, target: TypeID) -> bool {
+        let mut pending = vec![start];
+        let mut visited = HashSet::new();
+
+        while let Some(id) = pending.pop() {
+            if id == target {
+                return true;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+
+            match &self.world.lookup(id).kind {
+                TypeKind::Pack(pack) => pending.extend(pack.members.iter().map(|m| m.ty)),
+                TypeKind::Enum(enm) => pending.push(enm.underlying),
+                TypeKind::Bitfld(bitfld) => {
+                    pending.push(bitfld.underlying);
+                    pending.extend(bitfld.members.iter().map(|m| m.underlying));
+                }
+                TypeKind::Variant(variant) => {
+                    pending.push(variant.discriminant);
+                    pending.extend(variant.members.iter().map(|m| m.ty));
+                }
+                TypeKind::Sequence(sequence) => {
+                    pending.extend(sequence.members.iter().map(|m| m.ty));
+                }
+                TypeKind::DynamicArray(array) => {
+                    pending.push(array.size_type);
+                    pending.push(array.value_type);
+                }
+                TypeKind::FixedArray(array) => pending.push(array.value_type),
+                TypeKind::Const(value) => pending.push(value.ty),
+                TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void => {}
+            }
+        }
+
+        false
     }
 
     fn cpp_pod_type(&self, id: TypeID, ns: Namespace) -> anyhow::Result<String> {
@@ -643,7 +687,13 @@ fn emit_type_def(
                         } else {
                             target
                         };
-                        case.wln(&format!("{} value{{}};", payload));
+                        let initializer =
+                            if matches!(ns, Namespace::Read) && ctx.references_type(m.ty, id) {
+                                ""
+                            } else {
+                                "{}"
+                            };
+                        case.wln(&format!("{} value{};", payload, initializer));
                     }
                 }
                 out.wln(";");

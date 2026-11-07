@@ -123,6 +123,35 @@ variant V : u8
 }
 
 #[test]
+fn cpp_recursive_variant_payload_does_not_require_complete_element_type() {
+    let world = world_from(
+        r#"
+dyn_array Children : u8 * Node
+
+variant Node : u8
+- Value = 0 => u8
+- Children = 1 => Children
+"#,
+    );
+
+    let cpp_out = temp_path("cpp_recursive_variant", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit C++");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read C++ output");
+
+    assert!(
+        cpp_src.contains("std::uint8_t value{};"),
+        "POD payloads should remain value-initialized"
+    );
+    assert!(
+        cpp_src.contains("ChildrenReader value;"),
+        "recursive non-POD payloads must not be value-initialized before their element type is complete"
+    );
+    assert!(!cpp_src.contains("ChildrenReader value{};"));
+
+    let _ = fs::remove_file(&cpp_out);
+}
+
+#[test]
 fn optional_guard_emits_valid_code() {
     let world = world_from(
         r#"
