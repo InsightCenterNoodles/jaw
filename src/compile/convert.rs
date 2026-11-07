@@ -117,6 +117,7 @@ pub(super) fn convert(
             let convert_member =
                 |member: intermediate::VariantMember| -> anyhow::Result<VariantMember> {
                     Ok(VariantMember {
+                        name: member.name,
                         ty: state.lookup(&member.ty).with_context(|| {
                             format!(
                                 "while resolving variant member type {} at {}",

@@ -88,6 +88,7 @@ pub struct Bitfld {
 
 #[derive(Debug)]
 pub struct VariantMember {
+    pub name: String,
     pub ty: TypeName,
     pub value: u64,
     pub defined_at: SourceLocation,

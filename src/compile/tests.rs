@@ -83,14 +83,14 @@ seq AnyKeyPair
 - value : Any
 
 variant Any : u8
-- 0 => void
-- 1 => u8
-- 2 => i64
-- 3 => f64
-- 4 => AnyString
-- 5 => AnyArray
-- 6 => AnyMap
-- 7 => AnyBytes
+- Null = 0 => void
+- Unsigned = 1 => u8
+- Integer = 2 => i64
+- Float = 3 => f64
+- String = 4 => AnyString
+- Array = 5 => AnyArray
+- Map = 6 => AnyMap
+- Bytes = 7 => AnyBytes
 "#;
 
     let module = intermediate::Module::from_string("file".into(), src.into()).unwrap();
@@ -192,7 +192,7 @@ fn unknown_type_references_are_rejected() {
         "seq Bad\n- a : Missing\n",
         "enum Bad : Missing\n- A = 1\n",
         "bits Bad : u8\n- 0 a : Missing\n",
-        "variant Bad : u8\n- 0 => Missing\n",
+        "variant Bad : u8\n- MissingCase = 0 => Missing\n",
         "dyn_array Bad : u8 * Missing\n",
         "fixed_array Bad : 1 * Missing\n",
         "const Bad : Missing = 1\n",
@@ -313,20 +313,25 @@ bits Flags : Base
 /// Test: variant declarations validate discriminant type, uniqueness, and value bounds.
 #[test]
 fn variant_rules_are_enforced() {
-    compile_src("variant Maybe : u8\n- 0 => void\n- 1 => u8\n").expect("void payloads are valid");
+    compile_src("variant Maybe : u8\n- None = 0 => void\n- Some = 1 => u8\n")
+        .expect("void payloads are valid");
 
     assert_compile_err_contains(
-        "variant Bad : i8\n- 0 => void\n",
+        "variant Bad : i8\n- Empty = 0 => void\n",
         "not integer with sign Unsigned",
     );
     assert_compile_err_contains(
-        "variant Bad : u8\n- 1 => void\n- 1 => u8\n",
+        "variant Bad : u8\n- First = 1 => void\n- Second = 1 => u8\n",
         "duplicate discriminant",
     );
-    assert_compile_err_contains("variant Bad : u8\n- 256 => void\n", "cannot fit");
+    assert_compile_err_contains("variant Bad : u8\n- Empty = 256 => void\n", "cannot fit");
     assert_compile_err_contains(
-        "variant Bad : u8\n- 1 => void\n- reserve 1\n",
+        "variant Bad : u8\n- Empty = 1 => void\n- reserve 1\n",
         "value 1 is reserved",
+    );
+    assert_compile_err_contains(
+        "variant Bad : u8\n- Same = 1 => void\n- Same = 2 => u8\n",
+        "all names must be unique",
     );
 }
 
@@ -425,7 +430,7 @@ seq Message
 fn bool_is_excluded_from_integer_roles() {
     for source in [
         "enum Bad : bool\n- A = 0\n",
-        "variant Bad : bool\n- 0 => void\n",
+        "variant Bad : bool\n- Empty = 0 => void\n",
         "bits Bad : bool\n- 0 flag : u8\n",
         "bits Bad : u8\n- 0 flag : bool\n",
         "dyn_array Bad : bool * u8\n",
@@ -528,7 +533,7 @@ seq Local
 - value : u16
 
 variant Root : u8
-- 1 => Local
+- LocalValue = 1 => Local
 "#,
     )
     .expect("compile first world");

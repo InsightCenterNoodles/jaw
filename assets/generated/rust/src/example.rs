@@ -623,7 +623,7 @@ impl MyFlags
     }
     pub fn set_some_stuff(&mut self, v: PlainEnum)
     {
-        let v = v.raw();
+        let v = v.raw() as u8;
         self.0 &= !(0x3 << 3);
         self.0 |= (v & 0x3) << 3;
     }
@@ -875,33 +875,33 @@ impl<'a> JawWrite for ComplexSeqView<'a>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MyVariantDiscriminant
 {
-    MyPOD_1 = 1,
-    MyOtherPOD_2 = 2,
-    void_3 = 3,
-    SmallSeq_4 = 4,
-    ComplexSeq_5 = 5,
+    Pod = 1,
+    OtherPod = 2,
+    Empty = 3,
+    Small = 4,
+    Complex = 5,
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MyVariant
 {
-    MyPOD_1(MyPOD),
-    MyOtherPOD_2(MyOtherPOD),
-    void_3,
-    SmallSeq_4(SmallSeq),
-    ComplexSeq_5(ComplexSeq),
+    Pod(MyPOD),
+    OtherPod(MyOtherPOD),
+    Empty,
+    Small(SmallSeq),
+    Complex(ComplexSeq),
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MyVariantView<'a>
 {
-    MyPOD_1(&'a MyPOD),
-    MyOtherPOD_2(&'a MyOtherPOD),
-    void_3,
-    SmallSeqView_4(&'a SmallSeqView<'a>),
-    ComplexSeqView_5(&'a ComplexSeqView<'a>),
+    Pod(&'a MyPOD),
+    OtherPod(&'a MyOtherPOD),
+    Empty,
+    Small(&'a SmallSeqView<'a>),
+    Complex(&'a ComplexSeqView<'a>),
 }
 
 
@@ -915,27 +915,27 @@ impl JawRead for MyVariantDiscriminant
         {
             1 =>
             {
-                Ok(MyVariantDiscriminant::MyPOD_1)
+                Ok(MyVariantDiscriminant::Pod)
             }
             ,
             2 =>
             {
-                Ok(MyVariantDiscriminant::MyOtherPOD_2)
+                Ok(MyVariantDiscriminant::OtherPod)
             }
             ,
             3 =>
             {
-                Ok(MyVariantDiscriminant::void_3)
+                Ok(MyVariantDiscriminant::Empty)
             }
             ,
             4 =>
             {
-                Ok(MyVariantDiscriminant::SmallSeq_4)
+                Ok(MyVariantDiscriminant::Small)
             }
             ,
             5 =>
             {
-                Ok(MyVariantDiscriminant::ComplexSeq_5)
+                Ok(MyVariantDiscriminant::Complex)
             }
             ,
             _ => Err(invalid_data(format!("unknown tag for MyVariantDiscriminant: {tag}"))),
@@ -953,30 +953,30 @@ impl JawRead for MyVariant
             1 =>
             {
                 let payload = MyPOD::jaw_read(reader)?;
-                Ok(MyVariant::MyPOD_1(payload))
+                Ok(MyVariant::Pod(payload))
             }
             ,
             2 =>
             {
                 let payload = MyOtherPOD::jaw_read(reader)?;
-                Ok(MyVariant::MyOtherPOD_2(payload))
+                Ok(MyVariant::OtherPod(payload))
             }
             ,
             3 =>
             {
-                Ok(MyVariant::void_3)
+                Ok(MyVariant::Empty)
             }
             ,
             4 =>
             {
                 let payload = SmallSeq::jaw_read(reader)?;
-                Ok(MyVariant::SmallSeq_4(payload))
+                Ok(MyVariant::Small(payload))
             }
             ,
             5 =>
             {
                 let payload = ComplexSeq::jaw_read(reader)?;
-                Ok(MyVariant::ComplexSeq_5(payload))
+                Ok(MyVariant::Complex(payload))
             }
             ,
             _ => Err(invalid_data(format!("unknown tag for MyVariant: {tag}"))),
@@ -990,31 +990,31 @@ impl JawWrite for MyVariantDiscriminant
     {
         match self
         {
-            MyVariantDiscriminant::MyPOD_1 =>
+            MyVariantDiscriminant::Pod =>
             {
                 (1u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantDiscriminant::MyOtherPOD_2 =>
+            MyVariantDiscriminant::OtherPod =>
             {
                 (2u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantDiscriminant::void_3 =>
+            MyVariantDiscriminant::Empty =>
             {
                 (3u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantDiscriminant::SmallSeq_4 =>
+            MyVariantDiscriminant::Small =>
             {
                 (4u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantDiscriminant::ComplexSeq_5 =>
+            MyVariantDiscriminant::Complex =>
             {
                 (5u8).jaw_write(writer)?;
                 Ok(())
@@ -1030,34 +1030,34 @@ impl JawWrite for MyVariant
     {
         match self
         {
-            MyVariant::MyPOD_1(inner) =>
+            MyVariant::Pod(inner) =>
             {
                 (1u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariant::MyOtherPOD_2(inner) =>
+            MyVariant::OtherPod(inner) =>
             {
                 (2u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariant::void_3 =>
+            MyVariant::Empty =>
             {
                 (3u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariant::SmallSeq_4(inner) =>
+            MyVariant::Small(inner) =>
             {
                 (4u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariant::ComplexSeq_5(inner) =>
+            MyVariant::Complex(inner) =>
             {
                 (5u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
@@ -1074,34 +1074,34 @@ impl<'a> JawWrite for MyVariantView<'a>
     {
         match self
         {
-            MyVariantView::MyPOD_1(inner) =>
+            MyVariantView::Pod(inner) =>
             {
                 (1u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantView::MyOtherPOD_2(inner) =>
+            MyVariantView::OtherPod(inner) =>
             {
                 (2u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantView::void_3 =>
+            MyVariantView::Empty =>
             {
                 (3u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantView::SmallSeqView_4(inner) =>
+            MyVariantView::Small(inner) =>
             {
                 (4u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            MyVariantView::ComplexSeqView_5(inner) =>
+            MyVariantView::Complex(inner) =>
             {
                 (5u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;

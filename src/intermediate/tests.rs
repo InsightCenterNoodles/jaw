@@ -24,9 +24,12 @@ fn bit_sig(members: &[BitfldMember]) -> Vec<(&str, &str, &str)> {
         .collect()
 }
 
-/// Summarizes variant members as `(discriminant, payload_type)` for assertions.
-fn variant_sig(members: &[VariantMember]) -> Vec<(u64, &str)> {
-    members.iter().map(|m| (m.value, m.ty.as_str())).collect()
+/// Summarizes variant members as `(name, discriminant, payload_type)` for assertions.
+fn variant_sig(members: &[VariantMember]) -> Vec<(&str, u64, &str)> {
+    members
+        .iter()
+        .map(|m| (m.name.as_str(), m.value, m.ty.as_str()))
+        .collect()
 }
 
 fn parse_err(source: &str) -> IntermediateError {
@@ -214,11 +217,11 @@ fn intermediate() {
             assert_eq!(
                 variant_sig(&var.members),
                 vec![
-                    (1, "MyPOD"),
-                    (2, "MyOtherPOD"),
-                    (3, "void"),
-                    (4, "SmallSeq"),
-                    (5, "ComplexSeq")
+                    ("Pod", 1, "MyPOD"),
+                    ("OtherPod", 2, "MyOtherPOD"),
+                    ("Empty", 3, "void"),
+                    ("Small", 4, "SmallSeq"),
+                    ("Complex", 5, "ComplexSeq")
                 ]
             );
         }
@@ -231,7 +234,7 @@ fn intermediate() {
 fn variant_default_is_rejected() {
     let source = r#"
 variant Bad : u8
-> 0 => void
+> Empty = 0 => void
 "#;
 
     let err = Module::from_string("file".into(), source.into()).expect_err("parse should fail");
@@ -364,7 +367,7 @@ enum Mode : u8
 - reserve 20..=23
 
 variant Message : u8
-- 1 => void
+- Empty = 1 => void
 - reserve 7..=9
 "#;
     let module = Module::from_string("file".into(), source.into()).expect("parse module");
@@ -398,7 +401,7 @@ fn declaration_details_are_required() {
     for (source, kind) in [
         ("enum Missing\n- A = 1\n", "enum"),
         ("bits Missing\n- 0 a : u8\n", "bits"),
-        ("variant Missing\n- 0 => void\n", "variant"),
+        ("variant Missing\n- Empty = 0 => void\n", "variant"),
         ("fixed_array Missing\n", "fixed_array"),
         ("dyn_array Missing\n", "dyn_array"),
         ("const Missing\n", "const"),
@@ -436,7 +439,7 @@ fn malformed_members_are_rejected() {
     assert_malformed_member("pack Bad\n- a : u8 extra\n", "unexpected extra token");
     assert_malformed_member("enum Bad : u8\n- A : 1\n", "expected `=`");
     assert_malformed_member("bits Bad : u8\n- 0 flag u8\n", "expected `:`");
-    assert_malformed_member("variant Bad : u8\n- 0 -> void\n", "expected `=>`");
+    assert_malformed_member("variant Bad : u8\n- Case = 0 -> void\n", "expected `=>`");
 }
 
 /// Test: integer-valued members reject non-integer text.
@@ -444,7 +447,7 @@ fn malformed_members_are_rejected() {
 fn member_numbers_must_parse() {
     for source in [
         "enum Bad : u8\n- A = nope\n",
-        "variant Bad : u8\n- nope => void\n",
+        "variant Bad : u8\n- Case = nope => void\n",
         "fixed_array Bad : nope * u8\n",
     ] {
         let err = parse_err(source);
@@ -452,6 +455,12 @@ fn member_numbers_must_parse() {
             panic!("unexpected error kind: {err:?}");
         };
     }
+}
+
+/// Test: variant alternatives require an explicit, stable case name.
+#[test]
+fn anonymous_variant_members_are_rejected() {
+    assert_malformed_member("variant Bad : u8\n- 0 => void\n", "expected `=`");
 }
 
 /// Test: no declaration supports default members.

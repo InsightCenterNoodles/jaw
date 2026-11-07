@@ -627,28 +627,41 @@ fn emit_type_def(
             out.wln(";");
         }
         TypeKind::Variant(variant) => {
-            let mut payload_types = Vec::new();
+            let mut alternative_types = Vec::new();
             for m in &variant.members {
                 let target = ctx.cpp_type(m.ty, ns)?;
-                if ctx.is_void(m.ty) {
-                    payload_types.push("std::monostate".to_string());
-                } else if matches!(ns, Namespace::Write) {
-                    payload_types.push(format!("{} const*", target));
-                } else {
-                    payload_types.push(target);
+                let case_name = sanitize(&m.name);
+                let alternative = format!("{}_{}", name, case_name);
+                alternative_types.push(alternative.clone());
+
+                out.wln(&format!("struct {}", alternative));
+                {
+                    let mut case = out.indent();
+                    if !ctx.is_void(m.ty) {
+                        let payload = if matches!(ns, Namespace::Write) {
+                            format!("{} const*", target)
+                        } else {
+                            target
+                        };
+                        case.wln(&format!("{} value{{}};", payload));
+                    }
                 }
+                out.wln(";");
             }
 
             out.wln(&format!(
                 "struct {} : std::variant<{}>",
                 name,
-                payload_types.join(", ")
+                alternative_types.join(", ")
             ));
             {
                 let mut idt = out.indent();
 
                 idt.wln("using variant::variant;");
                 idt.wln("using variant::operator=;");
+                for (m, alternative) in variant.members.iter().zip(&alternative_types) {
+                    idt.wln(&format!("using {} = {};", sanitize(&m.name), alternative));
+                }
             }
             out.wln(";");
         }
@@ -818,14 +831,17 @@ fn emit_read_impl(
                         sw.wln(&format!("case {}:", m.value));
                         {
                             let mut body = sw.indent();
+                            let case_name = sanitize(&m.name);
                             if ctx.is_void(m.ty) {
-                                body.wln("value = std::monostate{};");
+                                body.wln(&format!(
+                                    "value.emplace<{variant_index}>({name}::{case_name}{{}});"
+                                ));
                                 body.wln("return true;");
                             } else {
                                 body.wln(&format!("{} payload{{}};", target_ty));
                                 body.wln("if (!read_value(reader, payload)) return false;");
                                 body.wln(&format!(
-                                    "value.emplace<{variant_index}>(std::move(payload));"
+                                    "value.emplace<{variant_index}>({name}::{case_name}{{std::move(payload)}});"
                                 ));
                                 body.wln("return true;");
                             }
@@ -994,7 +1010,10 @@ fn emit_write_impl(
                                 body.wln("if (!write_scalar(writer, tag)) return false;");
                                 body.wln("return true;");
                             } else {
-                                body.wln(&format!("auto payload = std::get<{}>(value);", idx));
+                                body.wln(&format!(
+                                    "auto payload = std::get<{}>(value).value;",
+                                    idx
+                                ));
                                 body.wln("if (payload == nullptr) return false;");
                                 body.wln(&format!(
                                     "auto tag = static_cast<{}>({});",

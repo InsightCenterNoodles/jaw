@@ -8,11 +8,11 @@ seq AnyKeyPair
 - value : Any
 
 variant Any : u8
-- 0 => void
-- 1 => u8
-- 2 => i64
-- 3 => f64
-- 4 => AnyString
-- 5 => AnyArray
-- 6 => AnyMap
-- 7 => AnyBytes
+- Null = 0 => void
+- Unsigned = 1 => u8
+- Integer = 2 => i64
+- Float = 3 => f64
+- String = 4 => AnyString
+- Array = 5 => AnyArray
+- Map = 6 => AnyMap
+- Bytes = 7 => AnyBytes

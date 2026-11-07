@@ -29,6 +29,10 @@ namespace example {
 
         struct MyPODReader;
 
+        struct ShortStringReader;
+
+        struct DataReader;
+
         struct MyOtherPODReader;
 
         struct PlainEnumReader;
@@ -39,6 +43,8 @@ namespace example {
 
         struct SmallSeqReader;
 
+        struct MyOtherPODDynListReader;
+
         struct ComplexSeqReader;
 
         struct MyVariantReader;
@@ -47,13 +53,7 @@ namespace example {
 
         using FixedStringReader = std::array<std::uint8_t, 4>;
 
-        using ShortStringReader = ArrayRef<std::uint8_t>;
-
-        using DataReader = ArrayRef<float>;
-
         using MyPODFixedListReader = std::array<MyPODReader, 8>;
-
-        using MyOtherPODDynListReader = ArrayRef<MyOtherPODReader>;
 
         template <class Reader> bool read(Reader&, MyPODReader&);
         template <class Reader> bool read(Reader&, FixedStringReader&);
@@ -76,6 +76,10 @@ namespace example {
 
         struct MyPODWriter;
 
+        struct ShortStringWriter;
+
+        struct DataWriter;
+
         struct MyOtherPODWriter;
 
         struct PlainEnumWriter;
@@ -86,6 +90,8 @@ namespace example {
 
         struct SmallSeqWriter;
 
+        struct MyOtherPODDynListWriter;
+
         struct ComplexSeqWriter;
 
         struct MyVariantWriter;
@@ -94,13 +100,7 @@ namespace example {
 
         using FixedStringWriter = std::array<std::uint8_t, 4>;
 
-        using ShortStringWriter = std::span<std::uint8_t>;
-
-        using DataWriter = std::span<float>;
-
         using MyPODFixedListWriter = std::array<MyPODWriter, 8>;
-
-        using MyOtherPODDynListWriter = std::span<MyOtherPODWriter>;
 
         template <class Writer> bool write(Writer&, MyPODWriter const&);
         template <class Writer> bool write(Writer&, FixedStringWriter const&);
@@ -212,9 +212,23 @@ namespace example {
 
         using FixedStringReader = std::array<std::uint8_t, 4>;
 
-        using ShortStringReader = ArrayRef<std::uint8_t>;
+        struct ShortStringReader : ArrayRef<std::uint8_t>
+        {
+            using Base = ArrayRef<std::uint8_t>;
+            using Base::Base;
+            using Base::operator=;
+            ShortStringReader(Base value);
+        }
+        ;
 
-        using DataReader = ArrayRef<float>;
+        struct DataReader : ArrayRef<float>
+        {
+            using Base = ArrayRef<float>;
+            using Base::Base;
+            using Base::operator=;
+            DataReader(Base value);
+        }
+        ;
 
         #pragma pack(push, 1)
         struct MyOtherPODReader
@@ -337,7 +351,14 @@ namespace example {
 
         using MyPODFixedListReader = std::array<MyPODReader, 8>;
 
-        using MyOtherPODDynListReader = ArrayRef<MyOtherPODReader>;
+        struct MyOtherPODDynListReader : ArrayRef<MyOtherPODReader>
+        {
+            using Base = ArrayRef<MyOtherPODReader>;
+            using Base::Base;
+            using Base::operator=;
+            MyOtherPODDynListReader(Base value);
+        }
+        ;
 
         struct ComplexSeqReader 
         {
@@ -347,10 +368,39 @@ namespace example {
         }
         ;
 
-        struct MyVariantReader : std::variant<MyPODReader, MyOtherPODReader, std::monostate, SmallSeqReader, ComplexSeqReader>
+        struct MyVariantReader_Pod
+        {
+            MyPODReader value{};
+        }
+        ;
+        struct MyVariantReader_OtherPod
+        {
+            MyOtherPODReader value{};
+        }
+        ;
+        struct MyVariantReader_Empty
+        {
+        }
+        ;
+        struct MyVariantReader_Small
+        {
+            SmallSeqReader value{};
+        }
+        ;
+        struct MyVariantReader_Complex
+        {
+            ComplexSeqReader value{};
+        }
+        ;
+        struct MyVariantReader : std::variant<MyVariantReader_Pod, MyVariantReader_OtherPod, MyVariantReader_Empty, MyVariantReader_Small, MyVariantReader_Complex>
         {
             using variant::variant;
             using variant::operator=;
+            using Pod = MyVariantReader_Pod;
+            using OtherPod = MyVariantReader_OtherPod;
+            using Empty = MyVariantReader_Empty;
+            using Small = MyVariantReader_Small;
+            using Complex = MyVariantReader_Complex;
         }
         ;
 
@@ -361,6 +411,10 @@ namespace example {
         }
         ;
 
+
+        inline ShortStringReader::ShortStringReader(Base value) : Base(std::move(value)) {}
+        inline DataReader::DataReader(Base value) : Base(std::move(value)) {}
+        inline MyOtherPODDynListReader::MyOtherPODDynListReader(Base value) : Base(std::move(value)) {}
 
         template <class Reader> bool read(Reader&, MyPODReader&);
         template <class Reader> bool read(Reader&, FixedStringReader&);
@@ -464,33 +518,33 @@ namespace example {
                 {
                     MyPODReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<0>(std::move(payload));
+                    value.emplace<0>(MyVariantReader::Pod{std::move(payload)});
                     return true;
                 }
                 case 2:
                 {
                     MyOtherPODReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<1>(std::move(payload));
+                    value.emplace<1>(MyVariantReader::OtherPod{std::move(payload)});
                     return true;
                 }
                 case 3:
                 {
-                    value = std::monostate{};
+                    value.emplace<2>(MyVariantReader::Empty{});
                     return true;
                 }
                 case 4:
                 {
                     SmallSeqReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<3>(std::move(payload));
+                    value.emplace<3>(MyVariantReader::Small{std::move(payload)});
                     return true;
                 }
                 case 5:
                 {
                     ComplexSeqReader payload{};
                     if (!read_value(reader, payload)) return false;
-                    value.emplace<4>(std::move(payload));
+                    value.emplace<4>(MyVariantReader::Complex{std::move(payload)});
                     return true;
                 }
                 default: return false;
@@ -519,9 +573,23 @@ namespace example {
 
         using FixedStringWriter = std::array<std::uint8_t, 4>;
 
-        using ShortStringWriter = std::span<std::uint8_t>;
+        struct ShortStringWriter : std::span<std::uint8_t>
+        {
+            using Base = std::span<std::uint8_t>;
+            using Base::Base;
+            using Base::operator=;
+            ShortStringWriter(Base value);
+        }
+        ;
 
-        using DataWriter = std::span<float>;
+        struct DataWriter : std::span<float>
+        {
+            using Base = std::span<float>;
+            using Base::Base;
+            using Base::operator=;
+            DataWriter(Base value);
+        }
+        ;
 
         #pragma pack(push, 1)
         struct MyOtherPODWriter
@@ -644,7 +712,14 @@ namespace example {
 
         using MyPODFixedListWriter = std::array<MyPODWriter, 8>;
 
-        using MyOtherPODDynListWriter = std::span<MyOtherPODWriter>;
+        struct MyOtherPODDynListWriter : std::span<MyOtherPODWriter>
+        {
+            using Base = std::span<MyOtherPODWriter>;
+            using Base::Base;
+            using Base::operator=;
+            MyOtherPODDynListWriter(Base value);
+        }
+        ;
 
         struct ComplexSeqWriter 
         {
@@ -654,10 +729,39 @@ namespace example {
         }
         ;
 
-        struct MyVariantWriter : std::variant<MyPODWriter const*, MyOtherPODWriter const*, std::monostate, SmallSeqWriter const*, ComplexSeqWriter const*>
+        struct MyVariantWriter_Pod
+        {
+            MyPODWriter const* value{};
+        }
+        ;
+        struct MyVariantWriter_OtherPod
+        {
+            MyOtherPODWriter const* value{};
+        }
+        ;
+        struct MyVariantWriter_Empty
+        {
+        }
+        ;
+        struct MyVariantWriter_Small
+        {
+            SmallSeqWriter const* value{};
+        }
+        ;
+        struct MyVariantWriter_Complex
+        {
+            ComplexSeqWriter const* value{};
+        }
+        ;
+        struct MyVariantWriter : std::variant<MyVariantWriter_Pod, MyVariantWriter_OtherPod, MyVariantWriter_Empty, MyVariantWriter_Small, MyVariantWriter_Complex>
         {
             using variant::variant;
             using variant::operator=;
+            using Pod = MyVariantWriter_Pod;
+            using OtherPod = MyVariantWriter_OtherPod;
+            using Empty = MyVariantWriter_Empty;
+            using Small = MyVariantWriter_Small;
+            using Complex = MyVariantWriter_Complex;
         }
         ;
 
@@ -668,6 +772,10 @@ namespace example {
         }
         ;
 
+
+        inline ShortStringWriter::ShortStringWriter(Base value) : Base(std::move(value)) {}
+        inline DataWriter::DataWriter(Base value) : Base(std::move(value)) {}
+        inline MyOtherPODDynListWriter::MyOtherPODDynListWriter(Base value) : Base(std::move(value)) {}
 
         template <class Writer> bool write(Writer&, MyPODWriter const&);
         template <class Writer> bool write(Writer&, FixedStringWriter const&);
@@ -754,7 +862,7 @@ namespace example {
             {
                 case 0: 
                 {
-                    auto payload = std::get<0>(value);
+                    auto payload = std::get<0>(value).value;
                     if (payload == nullptr) return false;
                     auto tag = static_cast<std::uint8_t>(1);
                     if (!write_scalar(writer, tag)) return false;
@@ -762,7 +870,7 @@ namespace example {
                 }
                 case 1: 
                 {
-                    auto payload = std::get<1>(value);
+                    auto payload = std::get<1>(value).value;
                     if (payload == nullptr) return false;
                     auto tag = static_cast<std::uint8_t>(2);
                     if (!write_scalar(writer, tag)) return false;
@@ -776,7 +884,7 @@ namespace example {
                 }
                 case 3: 
                 {
-                    auto payload = std::get<3>(value);
+                    auto payload = std::get<3>(value).value;
                     if (payload == nullptr) return false;
                     auto tag = static_cast<std::uint8_t>(4);
                     if (!write_scalar(writer, tag)) return false;
@@ -784,7 +892,7 @@ namespace example {
                 }
                 case 4: 
                 {
-                    auto payload = std::get<4>(value);
+                    auto payload = std::get<4>(value).value;
                     if (payload == nullptr) return false;
                     auto tag = static_cast<std::uint8_t>(5);
                     if (!write_scalar(writer, tag)) return false;

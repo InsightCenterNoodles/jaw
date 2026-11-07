@@ -82,7 +82,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "pod-one");
-        auto ref = std::get<MyPODReader>(root.var);
+        auto ref = std::get<MyVariantReader::Pod>(root.var).value;
         DEMAND(ref.a_thing == 10);
         DEMAND(ref.b_thing == 20);
     }
@@ -92,7 +92,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "");
-        auto ref = std::get<MyOtherPODReader>(root.var);
+        auto ref = std::get<MyVariantReader::OtherPod>(root.var).value;
 
         DEMAND(ref.first.a_thing == 1);
         DEMAND(ref.first.b_thing == 0x1122334455667788ULL);
@@ -107,7 +107,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "void");
-        auto ref = std::get<std::monostate>(root.var);
+        auto ref = std::get<MyVariantReader::Empty>(root.var);
     }
 
     {
@@ -115,7 +115,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "floats");
-        auto ref = std::get<SmallSeqReader>(root.var);
+        auto ref = std::get<MyVariantReader::Small>(root.var).value;
 
         auto data = std::vector<float> { 1.0f, 2.5f, -3.25f, 0.0f };
 
@@ -127,7 +127,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "pod-two");
-        auto ref = std::get<MyPODReader>(root.var);
+        auto ref = std::get<MyVariantReader::Pod>(root.var).value;
 
         DEMAND(ref.a_thing == 255);
         DEMAND(ref.b_thing == 0xCAFEBABECAFED00DULL);
@@ -144,7 +144,7 @@ static void validate(std::span<std::byte> data) {
         for (int i = 0; i < 10; ++i)
             data.push_back(static_cast<float>(i) * 0.5f);
 
-        auto ref = std::get<SmallSeqReader>(root.var);
+        auto ref = std::get<MyVariantReader::Small>(root.var).value;
 
         DEMAND(ref.list == data);
     }
@@ -154,7 +154,7 @@ static void validate(std::span<std::byte> data) {
         DEMAND(read(reader, root));
 
         DEMAND(root.name == "complex");
-        auto ref = std::get<ComplexSeqReader>(root.var);
+        auto ref = std::get<MyVariantReader::Complex>(root.var).value;
 
         DEMAND(ref.flags.is_thing() == 1);
         DEMAND(ref.flags.another_thing() == 2);
@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = pod_one,
-                .var  = &mypod,
+                .var  = MyVariantWriter::Pod{&mypod},
             };
 
             DEMAND(write(writer, r));
@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = empty,
-                .var  = &other,
+                .var  = MyVariantWriter::OtherPod{&other},
             };
 
             DEMAND(write(writer, r));
@@ -263,7 +263,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = name,
-                .var  = std::monostate(),
+                .var  = MyVariantWriter::Empty{},
             };
 
             DEMAND(write(writer, r));
@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = name,
-                .var  = &seq,
+                .var  = MyVariantWriter::Small{&seq},
             };
 
 
@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = name,
-                .var  = &my_pod,
+                .var  = MyVariantWriter::Pod{&my_pod},
             };
 
             DEMAND(write(writer, r));
@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = name,
-                .var  = &seq,
+                .var  = MyVariantWriter::Small{&seq},
             };
 
             DEMAND(write(writer, r));
@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
 
             RootWriter r {
                 .name = name,
-                .var  = &seq,
+                .var  = MyVariantWriter::Complex{&seq},
             };
 
             DEMAND(write(writer, r));

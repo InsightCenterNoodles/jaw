@@ -269,6 +269,8 @@ fn verify_variant(world: &World, ty: &Type, value: &Variant) -> anyhow::Result<(
         bail!("variant declarations must contain at least one member");
     }
 
+    verify_unique(value.members.iter().map(|x| &x.name)).with_context(ctx)?;
+
     let underlying = verify_is_int_of(world, value.discriminant, Signedness::Unsigned)
         .context("underlying type")
         .with_context(ctx)?;

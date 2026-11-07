@@ -15,6 +15,11 @@ pub struct RustContext<'a> {
 }
 
 impl<'a> RustContext<'a> {
+    /// Sanitizes a DSL identifier for use in generated Rust source.
+    pub(crate) fn sanitize_ident(&self, name: &str) -> String {
+        sanitize(name)
+    }
+
     /// Builds a codegen context (name mapping and options).
     pub fn new(world: &'a World, options: &'a GlobalOptions) -> Result<Self> {
         let mut names = HashMap::new();

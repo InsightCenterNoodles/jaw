@@ -210,35 +210,35 @@ class MyVariant:
     tag: int = 0
     value: object = None
     @staticmethod
-    def make_MyPOD_1(value: MyPOD):
+    def make_Pod(value: MyPOD):
         return MyVariant(1, value)
     @staticmethod
-    def make_MyOtherPOD_2(value: MyOtherPOD):
+    def make_OtherPod(value: MyOtherPOD):
         return MyVariant(2, value)
     @staticmethod
-    def make_void_3():
+    def make_Empty():
         return MyVariant(3, None)
     @staticmethod
-    def make_SmallSeq_4(value: SmallSeq):
+    def make_Small(value: SmallSeq):
         return MyVariant(4, value)
     @staticmethod
-    def make_ComplexSeq_5(value: ComplexSeq):
+    def make_Complex(value: ComplexSeq):
         return MyVariant(5, value)
-    type_MyPOD_1: ClassVar[int] = 1
-    def is_MyPOD_1(self):
-        return self.tag == self.type_MyPOD_1
-    type_MyOtherPOD_2: ClassVar[int] = 2
-    def is_MyOtherPOD_2(self):
-        return self.tag == self.type_MyOtherPOD_2
-    type_void_3: ClassVar[int] = 3
-    def is_void_3(self):
-        return self.tag == self.type_void_3
-    type_SmallSeq_4: ClassVar[int] = 4
-    def is_SmallSeq_4(self):
-        return self.tag == self.type_SmallSeq_4
-    type_ComplexSeq_5: ClassVar[int] = 5
-    def is_ComplexSeq_5(self):
-        return self.tag == self.type_ComplexSeq_5
+    type_Pod: ClassVar[int] = 1
+    def is_Pod(self):
+        return self.tag == self.type_Pod
+    type_OtherPod: ClassVar[int] = 2
+    def is_OtherPod(self):
+        return self.tag == self.type_OtherPod
+    type_Empty: ClassVar[int] = 3
+    def is_Empty(self):
+        return self.tag == self.type_Empty
+    type_Small: ClassVar[int] = 4
+    def is_Small(self):
+        return self.tag == self.type_Small
+    type_Complex: ClassVar[int] = 5
+    def is_Complex(self):
+        return self.tag == self.type_Complex
 
 @dataclass(**_DATACLASS_SLOTS)
 class Root:

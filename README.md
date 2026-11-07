@@ -38,7 +38,7 @@ An example of the available features is provided in `assets/example.jaw`.
   - `seq Name` with `- field : Type`
   - A sequence may have no members; it is a named empty type with zero wire size
 - Variant (tagged union):
-  - `variant Name : <primitive-int>` alts `- <int> => Type` and reservations `- reserve <int>[..=<int>]`
+  - `variant Name : <primitive-int>` alts `- CaseName = <int> => Type` and reservations `- reserve <int>[..=<int>]`
   - Discriminant is the explicit `<int>` value
 - Fixed array (fixed size contiguous array):
   - `fixed_array : <integer literal * Type>`

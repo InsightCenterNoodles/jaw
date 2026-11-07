@@ -72,8 +72,8 @@ pack Foo
 - a : u8
 
 variant V : u8
-- 1 => Foo
-- 2 => Foo
+- First = 1 => Foo
+- Second = 2 => Foo
 "#,
     );
 
@@ -82,11 +82,11 @@ variant V : u8
     codegen::emit_rust(&world, &Default::default(), &rust_out).expect("emit rust");
     let rust_src = fs::read_to_string(&rust_out).expect("read rust output");
     assert!(
-        rust_src.contains("Foo_1"),
+        rust_src.contains("First"),
         "rust output missing first case name"
     );
     assert!(
-        rust_src.contains("Foo_2"),
+        rust_src.contains("Second"),
         "rust output missing second case name"
     );
     assert!(
@@ -94,7 +94,7 @@ variant V : u8
         "rust output missing variant discriminant enum"
     );
     assert!(
-        rust_src.contains("Foo_1 = 1"),
+        rust_src.contains("First = 1"),
         "rust output missing discriminant enum value mapping"
     );
     let _ = fs::remove_file(&rust_out);
@@ -104,14 +104,22 @@ variant V : u8
     codegen::emit_python(&world, &Default::default(), &py_out).expect("emit python");
     let py_src = fs::read_to_string(&py_out).expect("read python output");
     assert!(
-        py_src.contains("make_Foo_1"),
+        py_src.contains("make_First"),
         "python output missing first case helper"
     );
     assert!(
-        py_src.contains("type_Foo_2"),
+        py_src.contains("type_Second"),
         "python output missing second case constant"
     );
     let _ = fs::remove_file(&py_out);
+
+    // C++ alternatives are distinct named wrapper types even with repeated payloads.
+    let cpp_out = temp_path("cpp_variant_names", "hpp");
+    codegen::emit_cpp(&world, &Default::default(), &cpp_out).expect("emit C++");
+    let cpp_src = fs::read_to_string(&cpp_out).expect("read C++ output");
+    assert!(cpp_src.contains("using First = VReader_First;"));
+    assert!(cpp_src.contains("using Second = VReader_Second;"));
+    let _ = fs::remove_file(&cpp_out);
 }
 
 #[test]
@@ -163,7 +171,7 @@ pack P
 - a : u8
 
 variant V : u8
-- 1 => P
+- Payload = 1 => P
 "#,
     );
 
@@ -173,7 +181,7 @@ variant V : u8
 
     assert!(rust_src.contains("pub enum VView<'a>"));
     assert!(
-        rust_src.contains("P_1(&'a P),"),
+        rust_src.contains("Payload(&'a P),"),
         "write variant payload reference should use the enum lifetime"
     );
 

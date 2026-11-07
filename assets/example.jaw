@@ -72,11 +72,11 @@ seq ComplexSeq
 # A variant is a branch with an unsigned integer discriminant and explicit options per value. Unknown discriminants
 # are errors (no defaults). Variants may include void to represent an empty branch.
 variant MyVariant : u8
-- 1 => MyPOD
-- 2 => MyOtherPOD
-- 3 => void
-- 4 => SmallSeq
-- 5 => ComplexSeq
+- Pod = 1 => MyPOD
+- OtherPod = 2 => MyOtherPOD
+- Empty = 3 => void
+- Small = 4 => SmallSeq
+- Complex = 5 => ComplexSeq
 
 seq Root
 - name : ShortString

@@ -623,7 +623,7 @@ fn emit_type_definition(
 
                 for m in &v.members {
                     let mem_type_name = ctx.name_of(m.ty);
-                    let case_name = variant_case_name(ctx, m);
+                    let case_name = variant_case_name(m);
                     idt.wln("@staticmethod");
 
                     if ctx.is_void(m.ty) {
@@ -646,7 +646,7 @@ fn emit_type_definition(
                 }
 
                 for m in &v.members {
-                    let case_name = variant_case_name(ctx, m);
+                    let case_name = variant_case_name(m);
 
                     idt.wln(&format!("type_{}: ClassVar[int] = {}", case_name, m.value));
 
@@ -1036,8 +1036,8 @@ fn emit_bitfield_member_read(
 }
 
 /// Computes a stable, unique variant case name.
-fn variant_case_name(ctx: &PythonContext, m: &VariantMember) -> String {
-    sanitize(format!("{}_{}", ctx.name_of(m.ty), m.value))
+fn variant_case_name(m: &VariantMember) -> String {
+    sanitize(&m.name)
 }
 
 // Shared bound for dynamic array length encoding, based on the declared counter type.

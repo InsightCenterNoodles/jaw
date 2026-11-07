@@ -288,7 +288,7 @@ seq Payload
 - value : u8
 
 variant Message : u8
-- 1 => Payload
+- Data = 1 => Payload
 "#,
     );
 
@@ -456,8 +456,8 @@ seq Node
 - children : NodeList
 
 variant Any : u8
-- 1 => AnyString
-- 2 => AnyBytes
+- String = 1 => AnyString
+- Bytes = 2 => AnyBytes
 "#,
     );
 
@@ -473,7 +473,9 @@ variant Any : u8
     assert!(cpp_src.contains(
         "inline AnyStringWriter::AnyStringWriter(Base value) : Base(std::move(value)) {}"
     ));
-    assert!(cpp_src.contains("struct AnyReader : std::variant<AnyStringReader, AnyBytesReader>"));
+    assert!(cpp_src.contains("struct AnyReader : std::variant<AnyReader_String, AnyReader_Bytes>"));
+    assert!(cpp_src.contains("AnyStringReader value{};"));
+    assert!(cpp_src.contains("AnyBytesReader value{};"));
     assert!(!cpp_src.contains("using AnyStringReader ="));
     assert_cpp_header_compiles(&cpp_out);
 

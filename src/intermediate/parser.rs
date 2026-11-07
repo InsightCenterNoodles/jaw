@@ -161,7 +161,7 @@ impl BitfldMember {
 }
 
 impl VariantMember {
-    /// Parses a variant member line (discriminant + `=>` payload type).
+    /// Parses a variant member line (name + discriminant + `=>` payload type).
     fn parse(
         source: SourceCode,
         input: (usize, String),
@@ -173,10 +173,19 @@ impl VariantMember {
         };
         let mem_ty = consume_member_start(source.clone(), &mut iter, fallback)?;
 
-        let (value_position, raw_value) =
+        let (name_position, name) =
             iter.next()
                 .ok_or_else(|| IntermediateError::MalformedMember {
                     position: source.position(fallback),
+                    reason: "missing variant member name".into(),
+                })?;
+
+        demand_string(source.clone(), &mut iter, "=", name_position)?;
+
+        let (value_position, raw_value) =
+            iter.next()
+                .ok_or_else(|| IntermediateError::MalformedMember {
+                    position: source.position(name_position),
                     reason: "missing variant discriminant".into(),
                 })?;
         let value = raw_value
@@ -189,23 +198,24 @@ impl VariantMember {
 
         demand_string(source.clone(), &mut iter, "=>", value_position)?;
 
-        let (place, ty) = iter
-            .next()
-            .ok_or_else(|| IntermediateError::MalformedMember {
-                position: source.position(value_position),
-                reason: "missing variant type".into(),
-            })?;
+        let (type_position, ty) =
+            iter.next()
+                .ok_or_else(|| IntermediateError::MalformedMember {
+                    position: source.position(value_position),
+                    reason: "missing variant type".into(),
+                })?;
 
-        let ty = TypeName::from_string(source.position(value_position), ty)?;
+        let ty = TypeName::from_string(source.position(type_position), ty)?;
 
         demand_done(source.clone(), iter)?;
 
         Ok((
             mem_ty,
             Self {
+                name: name.into(),
                 ty,
                 value,
-                defined_at: SourceLocation::new(source, place),
+                defined_at: SourceLocation::new(source, name_position),
             },
         ))
     }

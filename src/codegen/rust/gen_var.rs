@@ -3,7 +3,7 @@ use crate::{
         Sink,
         rust::{context::RustContext, util::*},
     },
-    compile::{Type, TypeID, TypeKind, Variant, VariantMember},
+    compile::{Type, TypeID, TypeKind, Variant},
 };
 
 use anyhow::Result;
@@ -28,7 +28,7 @@ pub fn emit_var(
         {
             let mut idt = out.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 idt.wln(&format!("{case_name} = {},", m.value));
             }
         }
@@ -44,7 +44,7 @@ pub fn emit_var(
         {
             let mut idt = out.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 let payload = if matches!(ctx.lookup(m.ty).kind, TypeKind::Void) {
                     None
                 } else {
@@ -74,7 +74,7 @@ pub fn emit_var(
         {
             let mut idt = out.indent();
             for m in &variant.members {
-                let case_name = variant_case_viewname(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 let payload = if matches!(ctx.lookup(m.ty).kind, TypeKind::Void) {
                     None
                 } else {
@@ -106,20 +106,6 @@ fn variant_discriminant_name(ctx: &RustContext<'_>, id: TypeID) -> String {
     format!("{name}Discriminant")
 }
 
-// Keep variant arm names stable and unique even when payload types repeat.
-/// Computes a stable, unique variant case name.
-fn variant_case_name(ctx: &RustContext, m: &VariantMember) -> Result<String> {
-    let base = ctx.name_of(m.ty);
-    Ok(format!("{base}_{}", m.value))
-}
-
-// Keep variant arm names stable and unique even when payload types repeat.
-/// Computes a stable, unique variant case name.
-fn variant_case_viewname(ctx: &RustContext, m: &VariantMember) -> Result<String> {
-    let base = ctx.rust_view_type(m.ty);
-    Ok(format!("{base}_{}", m.value))
-}
-
 fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant) -> Result<()> {
     let name = ctx.name_of(id);
     let disc_name = variant_discriminant_name(ctx, id);
@@ -133,7 +119,7 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         {
             let mut mtch = idt.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 mtch.wln(&format!("{} =>", m.value));
                 {
                     let mut body = mtch.indent();
@@ -158,7 +144,7 @@ fn reader(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         {
             let mut mtch = idt.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 mtch.wln(&format!("{} =>", m.value));
                 {
                     let mut body = mtch.indent();
@@ -198,7 +184,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         {
             let mut mtch = idt.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
 
                 mtch.wln(&format!("{disc_name}::{case_name} =>"));
                 {
@@ -220,7 +206,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         {
             let mut mtch = idt.indent();
             for m in &variant.members {
-                let case_name = variant_case_name(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 let is_void = matches!(ctx.lookup(m.ty).kind, TypeKind::Void);
 
                 if is_void {
@@ -256,7 +242,7 @@ fn writer(ctx: &RustContext, out: &mut impl Sink, id: TypeID, variant: &Variant)
         {
             let mut mtch = idt.indent();
             for m in &variant.members {
-                let case_name = variant_case_viewname(ctx, m)?;
+                let case_name = ctx.sanitize_ident(&m.name);
                 let is_void = matches!(ctx.lookup(m.ty).kind, TypeKind::Void);
 
                 if is_void {

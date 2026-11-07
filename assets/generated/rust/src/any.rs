@@ -455,42 +455,42 @@ impl<'a> JawWrite for AnyMapView<'a>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnyDiscriminant
 {
-    void_0 = 0,
-    u8_1 = 1,
-    i64_2 = 2,
-    f64_3 = 3,
-    AnyString_4 = 4,
-    AnyArray_5 = 5,
-    AnyMap_6 = 6,
-    AnyBytes_7 = 7,
+    Null = 0,
+    Unsigned = 1,
+    Integer = 2,
+    Float = 3,
+    String = 4,
+    Array = 5,
+    Map = 6,
+    Bytes = 7,
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Any
 {
-    void_0,
-    u8_1(u8),
-    i64_2(i64),
-    f64_3(f64),
-    AnyString_4(AnyString),
-    AnyArray_5(AnyArray),
-    AnyMap_6(AnyMap),
-    AnyBytes_7(AnyBytes),
+    Null,
+    Unsigned(u8),
+    Integer(i64),
+    Float(f64),
+    String(AnyString),
+    Array(AnyArray),
+    Map(AnyMap),
+    Bytes(AnyBytes),
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AnyView<'a>
 {
-    void_0,
-    u8_1(&'a u8),
-    i64_2(&'a i64),
-    f64_3(&'a f64),
-    AnyStringView_4(&'a AnyStringView<'a>),
-    AnyArrayView_5(&'a AnyArrayView<'a>),
-    AnyMapView_6(&'a AnyMapView<'a>),
-    AnyBytesView_7(&'a AnyBytesView<'a>),
+    Null,
+    Unsigned(&'a u8),
+    Integer(&'a i64),
+    Float(&'a f64),
+    String(&'a AnyStringView<'a>),
+    Array(&'a AnyArrayView<'a>),
+    Map(&'a AnyMapView<'a>),
+    Bytes(&'a AnyBytesView<'a>),
 }
 
 
@@ -504,42 +504,42 @@ impl JawRead for AnyDiscriminant
         {
             0 =>
             {
-                Ok(AnyDiscriminant::void_0)
+                Ok(AnyDiscriminant::Null)
             }
             ,
             1 =>
             {
-                Ok(AnyDiscriminant::u8_1)
+                Ok(AnyDiscriminant::Unsigned)
             }
             ,
             2 =>
             {
-                Ok(AnyDiscriminant::i64_2)
+                Ok(AnyDiscriminant::Integer)
             }
             ,
             3 =>
             {
-                Ok(AnyDiscriminant::f64_3)
+                Ok(AnyDiscriminant::Float)
             }
             ,
             4 =>
             {
-                Ok(AnyDiscriminant::AnyString_4)
+                Ok(AnyDiscriminant::String)
             }
             ,
             5 =>
             {
-                Ok(AnyDiscriminant::AnyArray_5)
+                Ok(AnyDiscriminant::Array)
             }
             ,
             6 =>
             {
-                Ok(AnyDiscriminant::AnyMap_6)
+                Ok(AnyDiscriminant::Map)
             }
             ,
             7 =>
             {
-                Ok(AnyDiscriminant::AnyBytes_7)
+                Ok(AnyDiscriminant::Bytes)
             }
             ,
             _ => Err(invalid_data(format!("unknown tag for AnyDiscriminant: {tag}"))),
@@ -556,49 +556,49 @@ impl JawRead for Any
         {
             0 =>
             {
-                Ok(Any::void_0)
+                Ok(Any::Null)
             }
             ,
             1 =>
             {
                 let payload = u8::jaw_read(reader)?;
-                Ok(Any::u8_1(payload))
+                Ok(Any::Unsigned(payload))
             }
             ,
             2 =>
             {
                 let payload = i64::jaw_read(reader)?;
-                Ok(Any::i64_2(payload))
+                Ok(Any::Integer(payload))
             }
             ,
             3 =>
             {
                 let payload = f64::jaw_read(reader)?;
-                Ok(Any::f64_3(payload))
+                Ok(Any::Float(payload))
             }
             ,
             4 =>
             {
                 let payload = AnyString::jaw_read(reader)?;
-                Ok(Any::AnyString_4(payload))
+                Ok(Any::String(payload))
             }
             ,
             5 =>
             {
                 let payload = AnyArray::jaw_read(reader)?;
-                Ok(Any::AnyArray_5(payload))
+                Ok(Any::Array(payload))
             }
             ,
             6 =>
             {
                 let payload = AnyMap::jaw_read(reader)?;
-                Ok(Any::AnyMap_6(payload))
+                Ok(Any::Map(payload))
             }
             ,
             7 =>
             {
                 let payload = AnyBytes::jaw_read(reader)?;
-                Ok(Any::AnyBytes_7(payload))
+                Ok(Any::Bytes(payload))
             }
             ,
             _ => Err(invalid_data(format!("unknown tag for Any: {tag}"))),
@@ -612,49 +612,49 @@ impl JawWrite for AnyDiscriminant
     {
         match self
         {
-            AnyDiscriminant::void_0 =>
+            AnyDiscriminant::Null =>
             {
                 (0u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::u8_1 =>
+            AnyDiscriminant::Unsigned =>
             {
                 (1u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::i64_2 =>
+            AnyDiscriminant::Integer =>
             {
                 (2u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::f64_3 =>
+            AnyDiscriminant::Float =>
             {
                 (3u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::AnyString_4 =>
+            AnyDiscriminant::String =>
             {
                 (4u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::AnyArray_5 =>
+            AnyDiscriminant::Array =>
             {
                 (5u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::AnyMap_6 =>
+            AnyDiscriminant::Map =>
             {
                 (6u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyDiscriminant::AnyBytes_7 =>
+            AnyDiscriminant::Bytes =>
             {
                 (7u8).jaw_write(writer)?;
                 Ok(())
@@ -670,55 +670,55 @@ impl JawWrite for Any
     {
         match self
         {
-            Any::void_0 =>
+            Any::Null =>
             {
                 (0u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::u8_1(inner) =>
+            Any::Unsigned(inner) =>
             {
                 (1u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::i64_2(inner) =>
+            Any::Integer(inner) =>
             {
                 (2u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::f64_3(inner) =>
+            Any::Float(inner) =>
             {
                 (3u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::AnyString_4(inner) =>
+            Any::String(inner) =>
             {
                 (4u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::AnyArray_5(inner) =>
+            Any::Array(inner) =>
             {
                 (5u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::AnyMap_6(inner) =>
+            Any::Map(inner) =>
             {
                 (6u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            Any::AnyBytes_7(inner) =>
+            Any::Bytes(inner) =>
             {
                 (7u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
@@ -735,55 +735,55 @@ impl<'a> JawWrite for AnyView<'a>
     {
         match self
         {
-            AnyView::void_0 =>
+            AnyView::Null =>
             {
                 (0u8).jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::u8_1(inner) =>
+            AnyView::Unsigned(inner) =>
             {
                 (1u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::i64_2(inner) =>
+            AnyView::Integer(inner) =>
             {
                 (2u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::f64_3(inner) =>
+            AnyView::Float(inner) =>
             {
                 (3u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::AnyStringView_4(inner) =>
+            AnyView::String(inner) =>
             {
                 (4u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::AnyArrayView_5(inner) =>
+            AnyView::Array(inner) =>
             {
                 (5u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::AnyMapView_6(inner) =>
+            AnyView::Map(inner) =>
             {
                 (6u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;
                 Ok(())
             }
             ,
-            AnyView::AnyBytesView_7(inner) =>
+            AnyView::Bytes(inner) =>
             {
                 (7u8).jaw_write(writer)?;
                 inner.jaw_write(writer)?;

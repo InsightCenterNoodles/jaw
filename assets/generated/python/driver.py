@@ -23,7 +23,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"pod-one"), 
-            example.MyVariant.make_MyPOD_1(pod)
+            example.MyVariant.make_Pod(pod)
         )
     )
 
@@ -36,7 +36,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b""), 
-            example.MyVariant.make_MyOtherPOD_2(other)
+            example.MyVariant.make_OtherPod(other)
         )
     )
 
@@ -44,7 +44,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"void"), 
-            example.MyVariant.make_void_3()
+            example.MyVariant.make_Empty()
         )
     )
 
@@ -53,7 +53,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"floats"), 
-            example.MyVariant.make_SmallSeq_4(seq)
+            example.MyVariant.make_Small(seq)
         )
     )
 
@@ -62,7 +62,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"pod-two"), 
-            example.MyVariant.make_MyPOD_1(pod2)
+            example.MyVariant.make_Pod(pod2)
         )
     )
 
@@ -71,7 +71,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"seq-long"), 
-            example.MyVariant.make_SmallSeq_4(seq2)
+            example.MyVariant.make_Small(seq2)
         )
     )
 
@@ -100,7 +100,7 @@ def build_expected() -> List[example.Root]:
     expected.append(
         example.Root(
             array.array("B", b"complex"),
-            example.MyVariant.make_ComplexSeq_5(complex_seq),
+            example.MyVariant.make_Complex(complex_seq),
         )
     )
 
@@ -133,12 +133,12 @@ def compare_expected_actual(expected: List[example.Root], actual: List[example.R
         demand(a.name == e.name, f"name matches at {i}: {a.name} == {e.name}")
         demand(int(a.var.tag) == int(e.var.tag), f"variant tag matches at {i}")
         tag = int(e.var.tag)
-        if e.var.is_MyPOD_1():
+        if e.var.is_Pod():
             ep = e.var.value
             ap = a.var.value
             demand(int(ap.a_thing) == int(ep.a_thing), f"MyPOD.a_thing at {i}")
             demand(int(ap.b_thing) == int(ep.b_thing), f"MyPOD.b_thing at {i}")
-        elif e.var.is_MyOtherPOD_2():
+        elif e.var.is_OtherPod():
             eo = e.var.value
             ao = a.var.value
             demand(int(ao.first.a_thing) == int(eo.first.a_thing), f"MyOtherPOD.a_thing at {i}")
@@ -147,13 +147,13 @@ def compare_expected_actual(expected: List[example.Root], actual: List[example.R
                 demand(int(ao.second[j]) == int(eo.second[j]), f"MyOtherPOD.second[{j}] at {i}")
         elif tag == 3:
             demand(a.var.value is None, f"void at {i}")
-        elif e.var.is_SmallSeq_4():
+        elif e.var.is_Small():
             es = e.var.value
             aseq = a.var.value
             demand(len(aseq.list) == len(es.list), f"SmallSeq.size at {i}")
             for j, (x, y) in enumerate(zip(aseq.list, es.list)):
                 demand(x == y, f"SmallSeq.value[{j}] at {i}")
-        elif e.var.is_ComplexSeq_5():
+        elif e.var.is_Complex():
             es = e.var.value
             asq = a.var.value
             demand(int(asq.flags.is_thing) == int(es.flags.is_thing), f"ComplexSeq.flags.is_thing at {i}")

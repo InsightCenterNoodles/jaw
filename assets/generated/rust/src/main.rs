@@ -26,7 +26,7 @@ fn encode_expected() -> Vec<u8> {
 
         RootView {
             name: ShortStringView(name),
-            var: MyVariantView::MyPOD_1(&MyPOD {
+            var: MyVariantView::Pod(&MyPOD {
                 a_thing: 10,
                 b_thing: 20,
             }),
@@ -39,7 +39,7 @@ fn encode_expected() -> Vec<u8> {
     {
         Root {
             name: ShortString(b"".to_vec()),
-            var: MyVariant::MyOtherPOD_2(MyOtherPOD {
+            var: MyVariant::OtherPod(MyOtherPOD {
                 first: MyPOD {
                     a_thing: 1,
                     b_thing: 0x1122334455667788,
@@ -55,7 +55,7 @@ fn encode_expected() -> Vec<u8> {
     {
         RootView {
             name: example::ShortStringView(b"void"),
-            var: MyVariantView::void_3,
+            var: MyVariantView::Empty,
         }
         .jaw_write(&mut expected)
         .unwrap();
@@ -65,7 +65,7 @@ fn encode_expected() -> Vec<u8> {
     {
         Root {
             name: ShortString(b"floats".to_vec()),
-            var: MyVariant::SmallSeq_4(SmallSeq {
+            var: MyVariant::Small(SmallSeq {
                 list: Data([1.0, 2.5, -3.25, 0.0].to_vec()),
             }),
         }
@@ -77,7 +77,7 @@ fn encode_expected() -> Vec<u8> {
     {
         RootView {
             name: ShortStringView(b"pod-two"),
-            var: MyVariantView::MyPOD_1(&MyPOD {
+            var: MyVariantView::Pod(&MyPOD {
                 a_thing: 255,
                 b_thing: 0xCAFEBABECAFED00D,
             }),
@@ -91,7 +91,7 @@ fn encode_expected() -> Vec<u8> {
         let vec: Vec<_> = (0..10).map(|x| (x as f32) * 0.5).collect();
         RootView {
             name: ShortStringView(b"seq-long"),
-            var: MyVariantView::SmallSeqView_4(&SmallSeqView {
+            var: MyVariantView::Small(&SmallSeqView {
                 list: DataView(&vec),
             }),
         }
@@ -171,7 +171,7 @@ fn encode_expected() -> Vec<u8> {
         };
         Root {
             name: ShortString(b"complex".to_vec()),
-            var: MyVariant::ComplexSeq_5(seq),
+            var: MyVariant::Complex(seq),
         }
         .jaw_write(&mut expected)
         .unwrap();
@@ -187,7 +187,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"pod-one".into()),
-            var: MyVariant::MyPOD_1(MyPOD {
+            var: MyVariant::Pod(MyPOD {
                 a_thing: 10,
                 b_thing: 20,
             }),
@@ -198,7 +198,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"".into()),
-            var: MyVariant::MyOtherPOD_2(MyOtherPOD {
+            var: MyVariant::OtherPod(MyOtherPOD {
                 first: MyPOD {
                     a_thing: 1,
                     b_thing: 0x1122334455667788,
@@ -212,7 +212,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"void".into()),
-            var: MyVariant::void_3,
+            var: MyVariant::Empty,
         });
     }
 
@@ -220,7 +220,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"floats".into()),
-            var: MyVariant::SmallSeq_4(SmallSeq {
+            var: MyVariant::Small(SmallSeq {
                 list: Data([1.0, 2.5, -3.25, 0.0].into()),
             }),
         });
@@ -230,7 +230,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"pod-two".into()),
-            var: MyVariant::MyPOD_1(MyPOD {
+            var: MyVariant::Pod(MyPOD {
                 a_thing: 255,
                 b_thing: 0xCAFEBABECAFED00D,
             }),
@@ -242,7 +242,7 @@ fn make_expected() -> Vec<Root> {
         let vec: Vec<_> = (0..10).map(|x| (x as f32) * 0.5).collect();
         expected.push(Root {
             name: ShortString(b"seq-long".into()),
-            var: MyVariant::SmallSeq_4(SmallSeq {
+            var: MyVariant::Small(SmallSeq {
                 list: example::Data(vec),
             }),
         });
@@ -252,7 +252,7 @@ fn make_expected() -> Vec<Root> {
     {
         expected.push(Root {
             name: ShortString(b"complex".into()),
-            var: MyVariant::ComplexSeq_5(ComplexSeq {
+            var: MyVariant::Complex(ComplexSeq {
                 flags: MyFlagsUnpack {
                     is_thing: 1,
                     another_thing: 2,
@@ -343,11 +343,11 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
         demand(a.name == e.name, &format!("name matches at {}", i));
         // Compare variant kind
         match (&e.var, &a.var) {
-            (MyVariant::MyPOD_1(ep), MyVariant::MyPOD_1(ap)) => {
+            (MyVariant::Pod(ep), MyVariant::Pod(ap)) => {
                 demand(ap.a_thing == ep.a_thing, &format!("MyPOD.a_thing at {}", i));
                 demand(ap.b_thing == ep.b_thing, &format!("MyPOD.b_thing at {}", i));
             }
-            (MyVariant::MyOtherPOD_2(eo), MyVariant::MyOtherPOD_2(ao)) => {
+            (MyVariant::OtherPod(eo), MyVariant::OtherPod(ao)) => {
                 demand(
                     ao.first.a_thing == eo.first.a_thing,
                     &format!("MyOtherPOD.first.a_thing at {}", i),
@@ -363,10 +363,10 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
                     );
                 }
             }
-            (MyVariant::void_3, MyVariant::void_3) => {
+            (MyVariant::Empty, MyVariant::Empty) => {
                 // void payload, nothing to compare
             }
-            (MyVariant::SmallSeq_4(es), MyVariant::SmallSeq_4(as_)) => {
+            (MyVariant::Small(es), MyVariant::Small(as_)) => {
                 demand(
                     as_.list.0.len() == es.list.0.len(),
                     &format!("SmallSeq.size at {}", i),
@@ -375,7 +375,7 @@ fn compare_expected_actual(expected: &[Root], actual: &[Root]) {
                     demand(*x == *y, &format!("SmallSeq.value[{}] at {}", j, i));
                 }
             }
-            (MyVariant::ComplexSeq_5(es), MyVariant::ComplexSeq_5(as_)) => {
+            (MyVariant::Complex(es), MyVariant::Complex(as_)) => {
                 demand(
                     as_.flags.is_thing() == es.flags.is_thing(),
                     &format!("ComplexSeq.flags.is_thing at {}", i),

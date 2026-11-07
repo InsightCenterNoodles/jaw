@@ -38,7 +38,7 @@ impl Fixture {
 fn small_root() -> Root {
     Root {
         name: ShortString(b"pod-one".to_vec()),
-        var: MyVariant::MyPOD_1(MyPOD {
+        var: MyVariant::Pod(MyPOD {
             a_thing: 10,
             b_thing: 20,
         }),
@@ -114,7 +114,7 @@ fn complex_root() -> Root {
 
     Root {
         name: ShortString(b"complex".to_vec()),
-        var: MyVariant::ComplexSeq_5(ComplexSeq {
+        var: MyVariant::Complex(ComplexSeq {
             flags,
             list,
             other_list,
