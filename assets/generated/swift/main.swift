@@ -48,6 +48,7 @@ do {
     for message in messages {
         try message.jawWrite(to: &streamWriter)
     }
+    try streamWriter.flush()
     guard
         let streamedData = outputStream.property(forKey: .dataWrittenToMemoryStreamKey)
             as? Foundation.Data,

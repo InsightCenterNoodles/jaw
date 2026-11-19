@@ -17,6 +17,11 @@ Benchmarks
 
 - Run the generated Rust encode/decode benchmarks: `cargo bench --bench generated_rust`
 - The benchmarks use checked-in Rust generator output and report latency and byte throughput for small messages, nested messages, and byte/POD arrays from empty through roughly 1 MiB. They also compare reused, fresh, and buffered writers.
+- Run the optimized Swift benchmarks on macOS:
+  1. `cargo run -- --kind swift /tmp/jaw_swift_benchmark.swift benches/swift/benchmark.jaw`
+  2. `swiftc -O -swift-version 6 /tmp/jaw_swift_benchmark.swift benches/swift/main.swift -o /tmp/jaw_swift_benchmark`
+  3. `/tmp/jaw_swift_benchmark`
+- The Swift benchmark covers 1 MiB byte and float arrays, fixed-size record arrays, nested messages, buffered streams, and reused writers.
 
 DSL Summary
 
@@ -60,3 +65,5 @@ Generated Code
 Swift generation targets Swift 6.2 and macOS. `--swift-types-as-data <TYPE>...` maps selected
 dynamic `u8` arrays to `Foundation.Data`. `--swift-share-protocols <MODULE>` imports the
 complete Jaw Swift runtime from a shared module instead of emitting it into the output.
+`JawOutputStream` buffers writes and must be explicitly flushed with `flush()` before its
+underlying stream is consumed or closed.

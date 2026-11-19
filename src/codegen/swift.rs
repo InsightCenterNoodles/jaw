@@ -117,6 +117,48 @@ impl<'a> SwiftContext<'a> {
                 names.iter().any(|name| name == &original)
             })
     }
+
+    fn fixed_wire_size(&self, id: TypeID) -> Option<u64> {
+        fixed_wire_size(self.world, id)
+    }
+}
+
+fn fixed_wire_size(world: &World, id: TypeID) -> Option<u64> {
+    let sum_members = |members: &[crate::compile::StructMember]| {
+        members.iter().try_fold(0u64, |total, member| {
+            total.checked_add(fixed_wire_size(world, member.ty)?)
+        })
+    };
+
+    match &world.lookup(id).kind {
+        TypeKind::Primitive(value) => Some(u64::from(value.bits() / 8)),
+        TypeKind::Const(value) => fixed_wire_size(world, value.ty),
+        TypeKind::Enum(value) => fixed_wire_size(world, value.underlying),
+        TypeKind::Bitfld(value) => fixed_wire_size(world, value.underlying),
+        TypeKind::Pack(value) => sum_members(&value.members),
+        TypeKind::Sequence(value) => sum_members(&value.members),
+        TypeKind::FixedArray(value) => {
+            fixed_wire_size(world, value.value_type)?.checked_mul(value.count)
+        }
+        TypeKind::Variant(value) => {
+            let tag = fixed_wire_size(world, value.discriminant)?;
+            let mut payload_sizes = value.members.iter().map(|member| {
+                if matches!(world.lookup(member.ty).kind, TypeKind::Void) {
+                    Some(0)
+                } else {
+                    fixed_wire_size(world, member.ty)
+                }
+            });
+            let payload = payload_sizes.next()??;
+            if payload_sizes.all(|size| size == Some(payload)) {
+                tag.checked_add(payload)
+            } else {
+                None
+            }
+        }
+        TypeKind::DynamicArray(_) => None,
+        TypeKind::Void => Some(0),
+    }
 }
 
 fn emit_runtime(out: &mut impl Sink) {
@@ -126,6 +168,10 @@ fn emit_runtime(out: &mut impl Sink) {
 }
 
 const SWIFT_RUNTIME: &str = r#"
+#if _endian(big)
+#error("jaw Swift output currently supports little-endian targets only")
+#endif
+
 public enum JawError: Error, Equatable, Sendable {
     case unexpectedEndOfInput
     case invalidData(String)
@@ -133,11 +179,11 @@ public enum JawError: Error, Equatable, Sendable {
 }
 
 public protocol JawInput {
-    mutating func jawReadExactly(_ count: Int) throws -> Foundation.Data
+    mutating func jawRead(into buffer: UnsafeMutableRawBufferPointer) throws
 }
 
 public protocol JawOutput {
-    mutating func jawWriteAll(_ data: Foundation.Data) throws
+    mutating func jawWrite(_ buffer: UnsafeRawBufferPointer) throws
 }
 
 public protocol JawReadable {
@@ -157,129 +203,278 @@ public struct JawDataReader: JawInput {
         self.offset = offset
     }
 
-    public mutating func jawReadExactly(_ count: Int) throws -> Foundation.Data {
+    @inline(__always)
+    public mutating func jawRead(into buffer: UnsafeMutableRawBufferPointer) throws {
+        let count = buffer.count
         guard count >= 0, offset >= 0, offset <= data.count, count <= data.count - offset else {
             throw JawError.unexpectedEndOfInput
         }
-        let result = data.subdata(in: offset..<(offset + count))
+        if count > 0 {
+            data.copyBytes(to: buffer, from: offset..<(offset + count))
+        }
         offset += count
-        return result
     }
 }
 
 public struct JawDataWriter: JawOutput {
     public private(set) var data: Foundation.Data
 
-    public init(data: Foundation.Data = Foundation.Data()) {
+    public init(data: Foundation.Data = Foundation.Data(), minimumCapacity: Int = 0) {
         self.data = data
+        if minimumCapacity > data.count {
+            self.data.reserveCapacity(minimumCapacity)
+        }
     }
 
-    public mutating func jawWriteAll(_ data: Foundation.Data) throws {
-        self.data.append(data)
+    @inline(__always)
+    public mutating func jawWrite(_ buffer: UnsafeRawBufferPointer) throws {
+        data.append(contentsOf: buffer)
+    }
+
+    public mutating func reset(keepingCapacity: Bool = true) {
+        data.removeAll(keepingCapacity: keepingCapacity)
+    }
+}
+
+public struct JawFixedBufferReader: JawInput {
+    private let buffer: UnsafeRawBufferPointer
+    public private(set) var offset: Int = 0
+
+    public init(_ buffer: UnsafeRawBufferPointer) {
+        self.buffer = buffer
+    }
+
+    @inline(__always)
+    public mutating func jawRead(into destination: UnsafeMutableRawBufferPointer) throws {
+        guard destination.count <= buffer.count - offset else {
+            throw JawError.unexpectedEndOfInput
+        }
+        if destination.count > 0 {
+            destination.baseAddress!.copyMemory(
+                from: buffer.baseAddress!.advanced(by: offset),
+                byteCount: destination.count
+            )
+        }
+        offset += destination.count
+    }
+}
+
+public struct JawFixedBufferWriter: JawOutput {
+    private let buffer: UnsafeMutableRawBufferPointer
+    public private(set) var offset: Int = 0
+
+    public init(_ buffer: UnsafeMutableRawBufferPointer) {
+        self.buffer = buffer
+    }
+
+    @inline(__always)
+    public mutating func jawWrite(_ source: UnsafeRawBufferPointer) throws {
+        guard source.count <= buffer.count - offset else {
+            throw JawError.invalidData("fixed buffer overflow")
+        }
+        if source.count > 0 {
+            buffer.baseAddress!.advanced(by: offset).copyMemory(
+                from: source.baseAddress!,
+                byteCount: source.count
+            )
+        }
+        offset += source.count
     }
 }
 
 public struct JawInputStream: JawInput {
     public let stream: Foundation.InputStream
+    private var buffer: [UInt8]
+    private var bufferOffset: Int = 0
+    private var bufferCount: Int = 0
 
-    public init(_ stream: Foundation.InputStream) {
+    public init(_ stream: Foundation.InputStream, bufferSize: Int = 32 * 1024) {
+        precondition(bufferSize > 0, "buffer size must be positive")
         self.stream = stream
+        self.buffer = [UInt8](repeating: 0, count: bufferSize)
     }
 
-    public mutating func jawReadExactly(_ count: Int) throws -> Foundation.Data {
-        guard count >= 0 else { throw JawError.invalidData("negative read size") }
-        var result = Foundation.Data(count: count)
-        var offset = 0
-        while offset < count {
-            let read = result.withUnsafeMutableBytes { bytes -> Int in
-                guard let base = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
-                return stream.read(base.advanced(by: offset), maxLength: count - offset)
+    public mutating func jawRead(into destination: UnsafeMutableRawBufferPointer) throws {
+        var written = 0
+        while written < destination.count {
+            if bufferOffset == bufferCount {
+                let input = stream
+                bufferCount = buffer.withUnsafeMutableBytes { bytes -> Int in
+                    guard let base = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
+                    return input.read(base, maxLength: bytes.count)
+                }
+                bufferOffset = 0
+                if bufferCount < 0 {
+                    throw JawError.streamError(stream.streamError?.localizedDescription ?? "input stream error")
+                }
+                if bufferCount == 0 { throw JawError.unexpectedEndOfInput }
             }
-            if read < 0 {
-                throw JawError.streamError(stream.streamError?.localizedDescription ?? "input stream error")
+
+            let amount = min(destination.count - written, bufferCount - bufferOffset)
+            if amount > 0 {
+                buffer.withUnsafeBytes { source in
+                    destination.baseAddress!.advanced(by: written).copyMemory(
+                        from: source.baseAddress!.advanced(by: bufferOffset),
+                        byteCount: amount
+                    )
+                }
             }
-            if read == 0 { throw JawError.unexpectedEndOfInput }
-            offset += read
+            bufferOffset += amount
+            written += amount
         }
-        return result
     }
 }
 
 public struct JawOutputStream: JawOutput {
     public let stream: Foundation.OutputStream
+    private var buffer: [UInt8]
+    private var bufferCount: Int = 0
 
-    public init(_ stream: Foundation.OutputStream) {
+    public init(_ stream: Foundation.OutputStream, bufferSize: Int = 32 * 1024) {
+        precondition(bufferSize > 0, "buffer size must be positive")
         self.stream = stream
+        self.buffer = [UInt8](repeating: 0, count: bufferSize)
     }
 
-    public mutating func jawWriteAll(_ data: Foundation.Data) throws {
+    private func writeDirect(_ source: UnsafeRawBufferPointer) throws {
         var offset = 0
-        while offset < data.count {
-            let written = data.withUnsafeBytes { bytes -> Int in
-                guard let base = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return 0 }
-                return stream.write(base.advanced(by: offset), maxLength: data.count - offset)
-            }
+        while offset < source.count {
+            let base = source.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            let written = stream.write(base.advanced(by: offset), maxLength: source.count - offset)
             if written <= 0 {
                 throw JawError.streamError(stream.streamError?.localizedDescription ?? "output stream error")
             }
             offset += written
         }
     }
+
+    public mutating func jawWrite(_ source: UnsafeRawBufferPointer) throws {
+        if bufferCount == 0 && source.count >= buffer.count {
+            try writeDirect(source)
+            return
+        }
+
+        var consumed = 0
+        while consumed < source.count {
+            if bufferCount == buffer.count { try flush() }
+            let amount = min(source.count - consumed, buffer.count - bufferCount)
+            if amount > 0 {
+                buffer.withUnsafeMutableBytes { destination in
+                    destination.baseAddress!.advanced(by: bufferCount).copyMemory(
+                        from: source.baseAddress!.advanced(by: consumed),
+                        byteCount: amount
+                    )
+                }
+            }
+            bufferCount += amount
+            consumed += amount
+        }
+    }
+
+    public mutating func flush() throws {
+        if bufferCount == 0 { return }
+        let count = bufferCount
+        try buffer.withUnsafeBytes { bytes in
+            try writeDirect(UnsafeRawBufferPointer(rebasing: bytes[..<count]))
+        }
+        bufferCount = 0
+    }
 }
 
 public extension JawInput {
+    @inline(__always)
     mutating func jawReadInteger<T: FixedWidthInteger>(_ type: T.Type = T.self) throws -> T {
-        let data = try jawReadExactly(MemoryLayout<T>.size)
         var value: T = 0
-        _ = withUnsafeMutableBytes(of: &value) { destination in
-            data.copyBytes(to: destination)
+        try withUnsafeMutableBytes(of: &value) { destination in
+            try jawRead(into: destination)
         }
         return T(littleEndian: value)
+    }
+
+    mutating func jawReadExactly(_ count: Int) throws -> Foundation.Data {
+        guard count >= 0 else { throw JawError.invalidData("negative read size") }
+        var data = Foundation.Data(count: count)
+        try data.withUnsafeMutableBytes { buffer in
+            try jawRead(into: buffer)
+        }
+        return data
+    }
+
+    mutating func jawReadContiguousArray<Element>(
+        count: Int,
+        repeating initialValue: Element
+    ) throws -> [Element] {
+        var values = [Element](repeating: initialValue, count: count)
+        try values.withUnsafeMutableBufferPointer { elements in
+            try jawRead(into: UnsafeMutableRawBufferPointer(elements))
+        }
+        return values
     }
 }
 
 public extension JawOutput {
+    @inline(__always)
     mutating func jawWriteInteger<T: FixedWidthInteger>(_ value: T) throws {
         var littleEndian = value.littleEndian
         try withUnsafeBytes(of: &littleEndian) { bytes in
-            try jawWriteAll(Foundation.Data(bytes))
+            try jawWrite(bytes)
+        }
+    }
+
+    mutating func jawWriteAll(_ data: Foundation.Data) throws {
+        try data.withUnsafeBytes { buffer in
+            try jawWrite(buffer)
+        }
+    }
+
+    mutating func jawWriteContiguousArray<Element>(_ values: [Element]) throws {
+        try values.withUnsafeBufferPointer { elements in
+            try jawWrite(UnsafeRawBufferPointer(elements))
         }
     }
 }
 
-extension UInt8: JawReadable, JawWritable {
+public protocol JawFixedSize {
+    static var jawEncodedSize: Int { get }
+}
+
+public extension JawFixedSize {
+    static var jawEncodedSize: Int { MemoryLayout<Self>.size }
+}
+
+extension UInt8: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension UInt16: JawReadable, JawWritable {
+extension UInt16: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension UInt32: JawReadable, JawWritable {
+extension UInt32: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension UInt64: JawReadable, JawWritable {
+extension UInt64: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension Int8: JawReadable, JawWritable {
+extension Int8: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension Int16: JawReadable, JawWritable {
+extension Int16: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension Int32: JawReadable, JawWritable {
+extension Int32: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension Int64: JawReadable, JawWritable {
+extension Int64: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
 }
-extension Float: JawReadable, JawWritable {
+extension Float: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self {
         Float(bitPattern: try UInt32.jawRead(from: &input))
     }
@@ -287,7 +482,7 @@ extension Float: JawReadable, JawWritable {
         try bitPattern.jawWrite(to: &output)
     }
 }
-extension Double: JawReadable, JawWritable {
+extension Double: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self {
         Double(bitPattern: try UInt64.jawRead(from: &input))
     }
@@ -318,7 +513,7 @@ fn emit_struct(
     members: &[crate::compile::StructMember],
     _pack: &Pack,
 ) -> Result<()> {
-    emit_record(ctx, out, id, members)
+    emit_record(ctx, out, id, members, true)
 }
 
 fn emit_sequence(
@@ -327,7 +522,7 @@ fn emit_sequence(
     id: TypeID,
     sequence: &Sequence,
 ) -> Result<()> {
-    emit_record(ctx, out, id, &sequence.members)
+    emit_record(ctx, out, id, &sequence.members, false)
 }
 
 fn emit_record(
@@ -335,13 +530,24 @@ fn emit_record(
     out: &mut impl Sink,
     id: TypeID,
     members: &[crate::compile::StructMember],
+    fuse_fixed_io: bool,
 ) -> Result<()> {
     let name = ctx.declared_name(id);
+    let fixed_size = swift_fixed_size(ctx, id)?;
+    let fixed_conformance = if fixed_size.is_some() {
+        ", JawFixedSize"
+    } else {
+        ""
+    };
     out.wln(&format!(
-        "public struct {name}: Equatable, Sendable, JawReadable, JawWritable"
+        "public struct {name}: Equatable, Sendable, JawReadable, JawWritable{fixed_conformance}"
     ));
     {
         let mut body = out.indent();
+        if let Some(size) = fixed_size {
+            body.wln(&format!("public static let jawEncodedSize = {size}"));
+            body.newline();
+        }
         for member in members {
             body.wln(&format!(
                 "public var {}: {}",
@@ -369,32 +575,46 @@ fn emit_record(
         );
         {
             let mut read = body.indent();
-            for member in members {
-                let field = sanitize(&member.name);
-                read.wln(&format!(
-                    "let {field} = try {}.jawRead(from: &input)",
-                    ctx.type_name(member.ty)
-                ));
+            if fuse_fixed_io {
+                read.wln("return try withUnsafeTemporaryAllocation(byteCount: Self.jawEncodedSize, alignment: 1)");
+                {
+                    let mut block = read.indent();
+                    block.wln("buffer in");
+                    block.wln("try input.jawRead(into: buffer)");
+                    block.wln(
+                        "var blockInput = JawFixedBufferReader(UnsafeRawBufferPointer(buffer))",
+                    );
+                    emit_record_read_body(ctx, &mut block, members, "blockInput");
+                }
+            } else {
+                emit_record_read_body(ctx, &mut read, members, "input");
             }
-            let args = members
-                .iter()
-                .map(|m| {
-                    let field = sanitize(&m.name);
-                    format!("{field}: {field}")
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            read.wln(&format!("return Self({args})"));
         }
         body.newline();
         body.wln("public func jawWrite<Output: JawOutput>(to output: inout Output) throws");
         {
             let mut write = body.indent();
-            for member in members {
-                write.wln(&format!(
-                    "try {}.jawWrite(to: &output)",
-                    sanitize(&member.name)
-                ));
+            if fuse_fixed_io {
+                write.wln("try withUnsafeTemporaryAllocation(byteCount: Self.jawEncodedSize, alignment: 1)");
+                {
+                    let mut block = write.indent();
+                    block.wln("buffer in");
+                    block.wln("var blockOutput = JawFixedBufferWriter(buffer)");
+                    for member in members {
+                        block.wln(&format!(
+                            "try {}.jawWrite(to: &blockOutput)",
+                            sanitize(&member.name)
+                        ));
+                    }
+                    block.wln("try output.jawWrite(UnsafeRawBufferPointer(buffer))");
+                }
+            } else {
+                for member in members {
+                    write.wln(&format!(
+                        "try {}.jawWrite(to: &output)",
+                        sanitize(&member.name)
+                    ));
+                }
             }
         }
     }
@@ -402,14 +622,40 @@ fn emit_record(
     Ok(())
 }
 
+fn emit_record_read_body(
+    ctx: &SwiftContext,
+    out: &mut impl Sink,
+    members: &[crate::compile::StructMember],
+    input: &str,
+) {
+    for member in members {
+        let field = sanitize(&member.name);
+        out.wln(&format!(
+            "let {field} = try {}.jawRead(from: &{input})",
+            ctx.type_name(member.ty)
+        ));
+    }
+    let args = members
+        .iter()
+        .map(|member| {
+            let field = sanitize(&member.name);
+            format!("{field}: {field}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.wln(&format!("return Self({args})"));
+}
+
 fn emit_enum(ctx: &SwiftContext, out: &mut impl Sink, id: TypeID, value: &Enum) -> Result<()> {
     let name = ctx.declared_name(id);
     let base = ctx.type_name(value.underlying);
+    let fixed_size = swift_fixed_size(ctx, id)?.expect("enum must have a fixed wire size");
     out.wln(&format!(
-        "public struct {name}: Equatable, Hashable, Sendable, JawReadable, JawWritable"
+        "public struct {name}: Equatable, Hashable, Sendable, JawReadable, JawWritable, JawFixedSize"
     ));
     {
         let mut body = out.indent();
+        body.wln(&format!("public static let jawEncodedSize = {fixed_size}"));
         body.wln(&format!("public let rawValue: {base}"));
         body.wln(&format!(
             "public init(rawValue: {base}) {{ self.rawValue = rawValue }}"
@@ -479,11 +725,13 @@ fn emit_bitfield(
         ctx.underlying_primitive(value.underlying)
             .expect("verified bitfield base must be primitive"),
     );
+    let fixed_size = swift_fixed_size(ctx, id)?.expect("bitfield must have a fixed wire size");
     out.wln(&format!(
-        "public struct {name}: Equatable, Hashable, Sendable, JawReadable, JawWritable"
+        "public struct {name}: Equatable, Hashable, Sendable, JawReadable, JawWritable, JawFixedSize"
     ));
     {
         let mut body = out.indent();
+        body.wln(&format!("public static let jawEncodedSize = {fixed_size}"));
         body.wln(&format!("public var rawValue: {base}"));
         body.wln(&format!(
             "public init(rawValue: {base} = 0) {{ self.rawValue = rawValue }}"
@@ -558,11 +806,21 @@ fn emit_variant(
 ) -> Result<()> {
     let name = ctx.declared_name(id);
     let tag_type = ctx.type_name(value.discriminant);
+    let fixed_size = swift_fixed_size(ctx, id)?;
+    let fixed_conformance = if fixed_size.is_some() {
+        ", JawFixedSize"
+    } else {
+        ""
+    };
     out.wln(&format!(
-        "public indirect enum {name}: Equatable, Sendable, JawReadable, JawWritable"
+        "public indirect enum {name}: Equatable, Sendable, JawReadable, JawWritable{fixed_conformance}"
     ));
     {
         let mut body = out.indent();
+        if let Some(size) = fixed_size {
+            body.wln(&format!("public static let jawEncodedSize = {size}"));
+            body.newline();
+        }
         for member in &value.members {
             let case_name = variant_case_name(ctx, member.ty, member.value);
             if matches!(ctx.lookup(member.ty).kind, TypeKind::Void) {
@@ -640,6 +898,7 @@ fn emit_dynamic_array(
     } else {
         format!("[{element}]")
     };
+    let bulk_primitive = ctx.direct_primitive(value.value_type).is_some();
     let size_type = ctx.type_name(value.size_type);
     out.wln(&format!(
         "public struct {name}: Equatable, Sendable, JawReadable, JawWritable"
@@ -664,9 +923,14 @@ fn emit_dynamic_array(
                 let mut guard = method.indent();
                 guard.wln("throw JawError.invalidData(\"array length too large\")");
             }
-            emit_array_guard(ctx, &mut method, "count", &element);
+            emit_array_guard(ctx, &mut method, "count", value.value_type, &element);
             if ctx.uses_data(id) {
                 method.wln("return Self(try input.jawReadExactly(count))");
+            } else if bulk_primitive {
+                method.wln(&format!(
+                    "let values: [{element}] = try input.jawReadContiguousArray(count: count, repeating: 0)"
+                ));
+                method.wln("return Self(values)");
             } else {
                 method.wln(&format!("var values: [{element}] = []"));
                 method.wln("values.reserveCapacity(count)");
@@ -694,6 +958,8 @@ fn emit_dynamic_array(
             method.wln("try count.jawWrite(to: &output)");
             if ctx.uses_data(id) {
                 method.wln("try output.jawWriteAll(values)");
+            } else if bulk_primitive {
+                method.wln("try output.jawWriteContiguousArray(values)");
             } else {
                 method.wln("for value in values");
                 {
@@ -715,11 +981,14 @@ fn emit_fixed_array(
 ) -> Result<()> {
     let name = ctx.declared_name(id);
     let element = ctx.type_name(value.value_type);
+    let bulk_primitive = ctx.direct_primitive(value.value_type).is_some();
+    let fixed_size = swift_fixed_size(ctx, id)?.expect("fixed array must have a fixed wire size");
     out.wln(&format!(
-        "public struct {name}: Equatable, Sendable, JawReadable, JawWritable"
+        "public struct {name}: Equatable, Sendable, JawReadable, JawWritable, JawFixedSize"
     ));
     {
         let mut body = out.indent();
+        body.wln(&format!("public static let jawEncodedSize = {fixed_size}"));
         body.wln(&format!("public static let count = {}", value.count));
         body.wln(&format!("public var values: [{element}]"));
         body.wln(&format!(
@@ -731,14 +1000,20 @@ fn emit_fixed_array(
         );
         {
             let mut method = body.indent();
-            method.wln(&format!("var values: [{element}] = []"));
-            method.wln("values.reserveCapacity(Self.count)");
-            method.wln("for _ in 0..<Self.count");
-            {
-                let mut loop_body = method.indent();
-                loop_body.wln(&format!(
-                    "values.append(try {element}.jawRead(from: &input))"
+            if bulk_primitive {
+                method.wln(&format!(
+                    "let values: [{element}] = try input.jawReadContiguousArray(count: Self.count, repeating: 0)"
                 ));
+            } else {
+                method.wln(&format!("var values: [{element}] = []"));
+                method.wln("values.reserveCapacity(Self.count)");
+                method.wln("for _ in 0..<Self.count");
+                {
+                    let mut loop_body = method.indent();
+                    loop_body.wln(&format!(
+                        "values.append(try {element}.jawRead(from: &input))"
+                    ));
+                }
             }
             method.wln("return Self(values)");
         }
@@ -751,10 +1026,14 @@ fn emit_fixed_array(
                 let mut guard = method.indent();
                 guard.wln("throw JawError.invalidData(\"fixed array has incorrect length\")");
             }
-            method.wln("for value in values");
-            {
-                let mut loop_body = method.indent();
-                loop_body.wln("try value.jawWrite(to: &output)");
+            if bulk_primitive {
+                method.wln("try output.jawWriteContiguousArray(values)");
+            } else {
+                method.wln("for value in values");
+                {
+                    let mut loop_body = method.indent();
+                    loop_body.wln("try value.jawWrite(to: &output)");
+                }
             }
         }
     }
@@ -779,13 +1058,36 @@ fn emit_const(
     Ok(())
 }
 
-fn emit_array_guard(ctx: &SwiftContext, out: &mut impl Sink, count: &str, element: &str) {
+fn swift_fixed_size(ctx: &SwiftContext, id: TypeID) -> Result<Option<usize>> {
+    let Some(size) = ctx.fixed_wire_size(id) else {
+        return Ok(None);
+    };
+    if size > i64::MAX as u64 {
+        bail!(
+            "type {} has a fixed wire size that cannot fit in Swift Int",
+            ctx.lookup(id).ident
+        );
+    }
+    Ok(Some(size as usize))
+}
+
+fn emit_array_guard(
+    ctx: &SwiftContext,
+    out: &mut impl Sink,
+    count: &str,
+    element_id: TypeID,
+    element: &str,
+) {
     let Some(limit) = ctx.options.guard_array_size else {
         return;
     };
-    out.wln(&format!(
-        "let elementSize = max(1, MemoryLayout<{element}>.stride)"
-    ));
+    if let Some(size) = ctx.fixed_wire_size(element_id) {
+        out.wln(&format!("let elementSize = {size}"));
+    } else {
+        out.wln(&format!(
+            "let elementSize = max(1, MemoryLayout<{element}>.stride)"
+        ));
+    }
     out.wln(&format!(
         "let (byteCount, overflow) = {count}.multipliedReportingOverflow(by: elementSize)"
     ));

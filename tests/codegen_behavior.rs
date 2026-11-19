@@ -113,6 +113,10 @@ dyn_array Pods : u32 * MyPOD
 fn swift_data_mapping_is_validated_and_emitted() {
     let world = world_from(
         r#"
+pack Header
+- kind : u8
+- timestamp : u64
+
 dyn_array Bytes : u16 * u8
 dyn_array Words : u16 * u32
 "#,
@@ -127,6 +131,10 @@ dyn_array Words : u16 * u32
     let source = fs::read_to_string(&out).expect("read Swift output");
     assert!(source.contains("public var values: Foundation.Data"));
     assert!(source.contains("public var values: [UInt32]"));
+    assert!(source.contains("mutating func jawRead(into buffer: UnsafeMutableRawBufferPointer)"));
+    assert!(source.contains("jawReadContiguousArray"));
+    assert!(source.contains("public static let jawEncodedSize = 9"));
+    assert!(source.contains("JawFixedBufferReader"));
     let _ = fs::remove_file(&out);
 
     let invalid = GlobalOptions {
