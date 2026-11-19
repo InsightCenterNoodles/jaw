@@ -1,0 +1,13 @@
+pack SmallRecord
+- tag : u32
+- value : f64
+
+dyn_array ByteBlob : u32 * u8
+dyn_array FloatBlob : u32 * f32
+dyn_array RecordList : u32 * SmallRecord
+
+seq Envelope
+- header : SmallRecord
+- bytes : ByteBlob
+- samples : FloatBlob
+- records : RecordList
