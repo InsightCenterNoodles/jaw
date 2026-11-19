@@ -84,6 +84,7 @@ impl<'a> SwiftContext<'a> {
 
     fn type_name(&self, id: TypeID) -> String {
         match &self.lookup(id).kind {
+            TypeKind::Bool => "Bool".into(),
             TypeKind::Primitive(p) => primitive_name(*p).into(),
             TypeKind::Const(c) => self.type_name(c.ty),
             TypeKind::Void => "Void".into(),
@@ -131,6 +132,7 @@ fn fixed_wire_size(world: &World, id: TypeID) -> Option<u64> {
     };
 
     match &world.lookup(id).kind {
+        TypeKind::Bool => Some(1),
         TypeKind::Primitive(value) => Some(u64::from(value.bits() / 8)),
         TypeKind::Const(value) => fixed_wire_size(world, value.ty),
         TypeKind::Enum(value) => fixed_wire_size(world, value.underlying),
@@ -442,6 +444,23 @@ public extension JawFixedSize {
     static var jawEncodedSize: Int { MemoryLayout<Self>.size }
 }
 
+extension Bool: JawReadable, JawWritable, JawFixedSize {
+    public static let jawEncodedSize = 1
+
+    public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self {
+        let raw = try UInt8.jawRead(from: &input)
+        switch raw {
+        case 0: return false
+        case 1: return true
+        default: throw JawError.invalidData("invalid boolean byte: \(raw)")
+        }
+    }
+
+    public func jawWrite<Output: JawOutput>(to output: inout Output) throws {
+        try UInt8(self ? 1 : 0).jawWrite(to: &output)
+    }
+}
+
 extension UInt8: JawReadable, JawWritable, JawFixedSize {
     public static func jawRead<Input: JawInput>(from input: inout Input) throws -> Self { try input.jawReadInteger() }
     public func jawWrite<Output: JawOutput>(to output: inout Output) throws { try output.jawWriteInteger(self) }
@@ -502,7 +521,7 @@ fn emit_type(ctx: &SwiftContext, out: &mut impl Sink, id: TypeID, ty: &Type) -> 
         TypeKind::DynamicArray(value) => emit_dynamic_array(ctx, out, id, value),
         TypeKind::FixedArray(value) => emit_fixed_array(ctx, out, id, value),
         TypeKind::Const(value) => emit_const(ctx, out, id, value),
-        TypeKind::Primitive(_) | TypeKind::Void => Ok(()),
+        TypeKind::Bool | TypeKind::Primitive(_) | TypeKind::Void => Ok(()),
     }
 }
 
@@ -1050,6 +1069,7 @@ fn emit_const(
     let name = ctx.declared_name(id);
     let ty = ctx.type_name(value.ty);
     let literal = match value.value {
+        PrimitiveLiteral::Boolean(v) => v.to_string(),
         PrimitiveLiteral::Integer(v) => v.to_string(),
         PrimitiveLiteral::Real(v) => format!("{v:?}"),
     };

@@ -273,6 +273,15 @@ seq Message
     assert!(py_src.contains("values.append(value.enabled._raw)"));
     assert!(py_src.contains("raise ValueError(f'invalid boolean byte: {value}')"));
     let _ = fs::remove_file(&py_out);
+
+    let swift_out = temp_path("swift_bool", "swift");
+    codegen::emit_swift(&world, &Default::default(), &swift_out).expect("emit swift");
+    let swift_src = fs::read_to_string(&swift_out).expect("read swift output");
+    assert!(swift_src.contains("public let Enabled: Bool = true"));
+    assert!(swift_src.contains("public var enabled: Bool"));
+    assert!(swift_src.contains("invalid boolean byte"));
+    assert!(swift_src.contains("try UInt8(self ? 1 : 0).jawWrite"));
+    let _ = fs::remove_file(&swift_out);
 }
 
 #[test]
