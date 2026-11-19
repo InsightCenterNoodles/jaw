@@ -1,6 +1,7 @@
 mod cpp;
 mod python;
 mod rust;
+mod swift;
 
 use std::{fmt::Display, io::Write, path::Path};
 
@@ -196,6 +197,18 @@ pub fn emit_rust(
     let mut out = open_outfile(path, "{", "}")?;
     rust::emit(world, global, &mut out)
         .with_context(|| format!("while generating Rust into {}", path.display()))
+}
+
+/// Generates Swift code for a compiled `World` into the given path.
+pub fn emit_swift(
+    world: &World,
+    global: &GlobalOptions,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut out = open_outfile(path, "{", "}")?;
+    swift::emit(world, global, &mut out)
+        .with_context(|| format!("while generating Swift into {}", path.display()))
 }
 
 trait Sink {

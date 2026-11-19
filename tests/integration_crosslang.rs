@@ -55,6 +55,7 @@ struct Bindings {
     cpp_src_dir: PathBuf,
     cpp_build_dir: PathBuf,
     rust_dir: PathBuf,
+    swift_dir: PathBuf,
 }
 
 fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindings, DynError> {
@@ -110,12 +111,22 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     )?;
     codegen::emit_rust(world, &Default::default(), rust_src.join("example.rs"))?;
 
+    // Swift
+    let swift_dir = out_root.join("swift");
+    fs::create_dir_all(&swift_dir)?;
+    codegen::emit_swift(world, &Default::default(), swift_dir.join("example.swift"))?;
+    copy_file(
+        repo_root().join("assets/generated/swift/main.swift"),
+        swift_dir.join("main.swift"),
+    )?;
+
     Ok(Bindings {
         python_dir: python_dir.clone(),
         python_driver: python_dir.join("driver.py"),
         cpp_src_dir,
         cpp_build_dir,
         rust_dir,
+        swift_dir,
     })
 }
 
@@ -183,6 +194,24 @@ fn cargo_build_rust_driver(crate_dir: &Path) -> Result<PathBuf, DynError> {
         .find(|p| p.exists())
         .ok_or_else(|| "built rust driver not found".to_string())?;
     Ok(exe)
+}
+
+fn build_swift_driver(source_dir: &Path) -> Result<PathBuf, DynError> {
+    let executable = source_dir.join("jaw_swift");
+    let status = Command::new("swiftc")
+        .arg("-swift-version")
+        .arg("6")
+        .arg("-module-cache-path")
+        .arg(source_dir.join("module-cache"))
+        .arg(source_dir.join("example.swift"))
+        .arg(source_dir.join("main.swift"))
+        .arg("-o")
+        .arg(&executable)
+        .status()?;
+    if !status.success() {
+        return Err("swiftc build failed".into());
+    }
+    Ok(executable)
 }
 
 fn run_cpp_dump(exe: &Path, out_path: &Path) -> Result<(), DynError> {
@@ -253,6 +282,22 @@ fn run_rust_read(exe: &Path, in_path: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
+fn run_swift_roundtrip(
+    exe: &Path,
+    in_path: &Path,
+    out_path: Option<&Path>,
+) -> Result<(), DynError> {
+    let mut command = Command::new(exe);
+    command.arg(in_path);
+    if let Some(out_path) = out_path {
+        command.arg(out_path);
+    }
+    if !command.status()?.success() {
+        return Err("Swift driver round-trip failed".into());
+    }
+    Ok(())
+}
+
 fn golden_bytes() -> Result<Vec<u8>, DynError> {
     let text = include_str!("data/example.golden.hex");
     let digits: String = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -317,12 +362,21 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
 
     let cpp_exe = cmake_configure_build(&bindings.cpp_src_dir, &bindings.cpp_build_dir)?;
     let rust_exe = cargo_build_rust_driver(&bindings.rust_dir)?;
+    let swift_exe = if cfg!(target_os = "macos") && has_prog("swiftc", "--version") {
+        Some(build_swift_driver(&bindings.swift_dir)?)
+    } else {
+        eprintln!(
+            "skipping Swift compatibility checks: swiftc is unavailable or host is not macOS"
+        );
+        None
+    };
 
     let dumps_dir = workdir.join("dumps");
     fs::create_dir_all(&dumps_dir)?;
     let cpp_dump = dumps_dir.join("from_cpp.bin");
     let py_dump = dumps_dir.join("from_py.bin");
     let rs_dump = dumps_dir.join("from_rs.bin");
+    let swift_dump = dumps_dir.join("from_swift.bin");
     let golden = golden_bytes()?;
 
     // 1) Dump from C++; validate via Python and Rust
@@ -330,18 +384,38 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
     assert_golden(&cpp_dump, &golden)?;
     run_python_read(py, &bindings.python_driver, &bindings.python_dir, &cpp_dump)?;
     run_rust_read(&rust_exe, &cpp_dump)?;
+    if let Some(exe) = &swift_exe {
+        run_swift_roundtrip(exe, &cpp_dump, Some(&swift_dump))?;
+        assert_golden(&swift_dump, &golden)?;
+    }
 
     // 2) Dump from Python; validate via C++ and Rust
     run_python_dump(py, &bindings.python_driver, &bindings.python_dir, &py_dump)?;
     assert_golden(&py_dump, &golden)?;
     run_cpp_read(&cpp_exe, &py_dump)?;
     run_rust_read(&rust_exe, &py_dump)?;
+    if let Some(exe) = &swift_exe {
+        run_swift_roundtrip(exe, &py_dump, None)?;
+    }
 
     // 3) Dump from Rust; validate via Python and C++
     run_rust_dump(&rust_exe, &rs_dump)?;
     assert_golden(&rs_dump, &golden)?;
     run_python_read(py, &bindings.python_driver, &bindings.python_dir, &rs_dump)?;
     run_cpp_read(&cpp_exe, &rs_dump)?;
+    if let Some(exe) = &swift_exe {
+        run_swift_roundtrip(exe, &rs_dump, None)?;
+
+        // 4) Validate Swift's re-encoded stream with every existing backend.
+        run_python_read(
+            py,
+            &bindings.python_driver,
+            &bindings.python_dir,
+            &swift_dump,
+        )?;
+        run_cpp_read(&cpp_exe, &swift_dump)?;
+        run_rust_read(&rust_exe, &swift_dump)?;
+    }
 
     Ok(())
 }

@@ -1,14 +1,15 @@
 # jaw
 
-A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, Python and Rust.
+A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, Python, Rust and Swift.
 
 Quickstart
 
 - Build: `cargo build`
-- Run: `cargo run -- --kind <cpp|python|rust> <OUTPUT> <INPUT.jaw>...`
+- Run: `cargo run -- --kind <cpp|python|rust|swift> <OUTPUT> <INPUT.jaw>...`
   - Example (Python): `cargo run -- --kind python /tmp/example.py assets/example.jaw`
   - Example (C++): `cargo run -- --kind cpp /tmp/example.hpp assets/example.jaw`
   - Example (Rust): `cargo run -- --kind rust /tmp/example.rs assets/example.jaw`
+  - Example (Swift): `cargo run -- --kind swift /tmp/example.swift assets/example.jaw`
 
 The output path comes before one or more input schemas. When multiple inputs are supplied, their definitions are merged into one generated module.
 
@@ -48,3 +49,8 @@ Generated Code
 - Python: reader/writer helpers and simple data structures. See `assets/generated/python/` examples.
 - C++: header-only types and readers/writers.
 - Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write`.
+- Swift: Foundation-based value types implementing `JawReadable`/`JawWritable`, with `Data` and stream adapters.
+
+Swift generation targets Swift 6.2 and macOS. `--swift-types-as-data <TYPE>...` maps selected
+dynamic `u8` arrays to `Foundation.Data`. `--swift-share-protocols <MODULE>` imports the
+complete Jaw Swift runtime from a shared module instead of emitting it into the output.

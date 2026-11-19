@@ -9,6 +9,7 @@ enum GeneratorKind {
     Cpp,
     Python,
     Rust,
+    Swift,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -64,6 +65,7 @@ fn process() -> anyhow::Result<()> {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,
         GeneratorKind::Python => codegen::emit_python(&world, &args.options, args.output)?,
         GeneratorKind::Rust => codegen::emit_rust(&world, &args.options, args.output)?,
+        GeneratorKind::Swift => codegen::emit_swift(&world, &args.options, args.output)?,
     }
 
     Ok(())
