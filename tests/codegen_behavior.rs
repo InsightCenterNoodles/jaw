@@ -99,6 +99,41 @@ dyn_array Pods : u32 * MyPOD
         "cpp guard should use division to avoid overflow"
     );
     let _ = fs::remove_file(&cpp_out);
+
+    // Swift
+    let swift_out = temp_path("swift_guard_plumbed", "swift");
+    codegen::emit_swift(&world, &opts, &swift_out).expect("emit swift");
+    let swift_src = fs::read_to_string(&swift_out).expect("read swift output");
+    assert!(swift_src.contains("byteCount <= 16"));
+    assert!(swift_src.contains("multipliedReportingOverflow"));
+    let _ = fs::remove_file(&swift_out);
+}
+
+#[test]
+fn swift_data_mapping_is_validated_and_emitted() {
+    let world = world_from(
+        r#"
+dyn_array Bytes : u16 * u8
+dyn_array Words : u16 * u32
+"#,
+    );
+
+    let out = temp_path("swift_data_mapping", "swift");
+    let opts = GlobalOptions {
+        swift_types_as_data: Some(vec!["Bytes".into()]),
+        ..Default::default()
+    };
+    codegen::emit_swift(&world, &opts, &out).expect("emit Swift Data mapping");
+    let source = fs::read_to_string(&out).expect("read Swift output");
+    assert!(source.contains("public var values: Foundation.Data"));
+    assert!(source.contains("public var values: [UInt32]"));
+    let _ = fs::remove_file(&out);
+
+    let invalid = GlobalOptions {
+        swift_types_as_data: Some(vec!["Words".into()]),
+        ..Default::default()
+    };
+    assert!(codegen::emit_swift(&world, &invalid, temp_path("swift_bad_data", "swift")).is_err());
 }
 
 #[test]

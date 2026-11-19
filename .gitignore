@@ -22,6 +22,11 @@ target
 
 .DS_Store
 
+# Local generator output and Python bytecode
+/generated/
+__pycache__/
+*.py[cod]
+
 # Added by cargo
 
 /target

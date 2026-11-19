@@ -16,4 +16,12 @@ pub struct GlobalOptions {
     /// Rust: Replace given dynamic array types with `bytes::Bytes`. These MUST be arrays of u8.
     #[arg(long)]
     pub rust_types_as_bytes: Option<Vec<String>>,
+
+    /// Swift: Import the Jaw runtime and protocols from the given module.
+    #[arg(long)]
+    pub swift_share_protocols: Option<String>,
+
+    /// Swift: Replace given dynamic u8 array types with Foundation `Data`.
+    #[arg(long)]
+    pub swift_types_as_data: Option<Vec<String>>,
 }
