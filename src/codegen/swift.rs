@@ -621,7 +621,7 @@ fn emit_record(
                     block.wln("var blockOutput = JawFixedBufferWriter(buffer)");
                     for member in members {
                         block.wln(&format!(
-                            "try {}.jawWrite(to: &blockOutput)",
+                            "try self.{}.jawWrite(to: &blockOutput)",
                             sanitize(&member.name)
                         ));
                     }
@@ -630,7 +630,7 @@ fn emit_record(
             } else {
                 for member in members {
                     write.wln(&format!(
-                        "try {}.jawWrite(to: &output)",
+                        "try self.{}.jawWrite(to: &output)",
                         sanitize(&member.name)
                     ));
                 }
@@ -1168,6 +1168,7 @@ fn sanitize(value: impl AsRef<str>) -> String {
 }
 
 const SWIFT_KEYWORDS: &[&str] = &[
+    "Any",
     "associatedtype",
     "borrowing",
     "break",

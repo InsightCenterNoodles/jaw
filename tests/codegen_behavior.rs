@@ -47,6 +47,37 @@ fn assert_cpp_header_compiles(path: &PathBuf) {
     );
 }
 
+fn assert_swift_source_compiles(path: &PathBuf) {
+    if !cfg!(target_os = "macos") {
+        eprintln!("skipping Swift syntax check: host is not macOS");
+        return;
+    }
+
+    let available = Command::new("swiftc")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !available {
+        eprintln!("skipping Swift syntax check: swiftc not found");
+        return;
+    }
+
+    let module_cache = path.with_extension("module-cache");
+    let output = Command::new("swiftc")
+        .args(["-swift-version", "6", "-typecheck", "-module-cache-path"])
+        .arg(&module_cache)
+        .arg(path)
+        .output()
+        .expect("run Swift compiler");
+    let _ = fs::remove_dir_all(module_cache);
+    assert!(
+        output.status.success(),
+        "generated Swift source failed to compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn guard_is_plumbed_into_all_generators() {
     let world = world_from(
@@ -142,6 +173,41 @@ dyn_array Words : u16 * u32
         ..Default::default()
     };
     assert!(codegen::emit_swift(&world, &invalid, temp_path("swift_bad_data", "swift")).is_err());
+}
+
+#[test]
+fn swift_handles_any_type_and_output_field_names() {
+    let world = world_from(
+        r#"
+dyn_array AnyArray : u32 * Any
+
+variant Any : u8
+- Null = 0 => void
+- Array = 1 => AnyArray
+
+seq Output
+- value : u8
+
+seq Envelope
+- output : Output
+- payload : Any
+
+pack FixedEnvelope
+- output : u8
+"#,
+    );
+
+    let out = temp_path("swift_identifier_collisions", "swift");
+    codegen::emit_swift(&world, &Default::default(), &out).expect("emit Swift identifiers");
+    let source = fs::read_to_string(&out).expect("read Swift output");
+
+    assert!(source.contains("public indirect enum Any_"));
+    assert!(source.contains("public var payload: Any_"));
+    assert!(source.contains("try self.output.jawWrite(to: &output)"));
+    assert!(source.contains("try self.output.jawWrite(to: &blockOutput)"));
+    assert_swift_source_compiles(&out);
+
+    let _ = fs::remove_file(&out);
 }
 
 #[test]
