@@ -78,6 +78,127 @@ fn assert_swift_source_compiles(path: &PathBuf) {
     );
 }
 
+fn assert_javascript_runs(path: &PathBuf, script: &str) {
+    let system_jsc =
+        PathBuf::from("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc");
+    let jsc = if Command::new("jsc")
+        .args(["-e", "if (typeof BigInt !== 'function') throw new Error()"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        Some(PathBuf::from("jsc"))
+    } else if system_jsc.is_file() {
+        Some(system_jsc)
+    } else {
+        None
+    };
+    let node_available = Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !node_available && jsc.is_none() {
+        eprintln!("skipping JavaScript execution check: no JavaScript engine found");
+        return;
+    }
+
+    let driver = path.with_extension("driver.mjs");
+    let module_name = path.file_name().unwrap().to_string_lossy();
+    let source = format!("import * as jaw from './{module_name}';\n{script}\n");
+    fs::write(&driver, source).expect("write JavaScript test driver");
+    let output = if let Some(jsc) = jsc {
+        Command::new(jsc)
+            .arg("-m")
+            .arg(&driver)
+            .output()
+            .expect("run generated JavaScript with JavaScriptCore")
+    } else {
+        Command::new("node")
+            .arg(&driver)
+            .output()
+            .expect("run generated JavaScript with Node")
+    };
+    let _ = fs::remove_file(driver);
+    assert!(
+        output.status.success(),
+        "generated JavaScript failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn javascript_is_dependency_free_esm_and_roundtrips() {
+    let world = world_from(
+        r#"
+const LIMIT : u64 = 9007199254740993
+
+enum Kind : u64
+- Data = 7
+
+bits Flags : u64
+- 0 enabled : u8
+- 40-43 mode : u8
+
+pack Payload
+- id : u64
+- valid : bool
+
+fixed_array FourBytes : 4 * u8
+dyn_array Bytes : u64 * u8
+
+variant Choice : u64
+- Empty = 1 => void
+- Payload = 2 => Payload
+
+seq Message
+- kind : Kind
+- flags : Flags
+- payload : Payload
+- fixed : FourBytes
+- bytes : Bytes
+- choice : Choice
+"#,
+    );
+
+    let output = temp_path("javascript_roundtrip", "mjs");
+    codegen::emit_javascript(&world, &Default::default(), &output).expect("emit JavaScript");
+    let source = fs::read_to_string(&output).expect("read JavaScript output");
+    assert!(source.contains("export class JawReader"));
+    assert!(source.contains("export class Message"));
+    assert!(source.contains("export const LIMIT = 9007199254740993n;"));
+    assert!(source.contains("new Uint8Array()"));
+    assert!(!source.contains("require("));
+
+    assert_javascript_runs(
+        &output,
+        r#"
+const flags = new jaw.Flags();
+flags.enabled = 1;
+flags.mode = 9;
+const payload = new jaw.Payload({ id: 0xfedcba9876543210n, valid: true });
+const value = new jaw.Message({
+    kind: jaw.Kind.Data,
+    flags,
+    payload,
+    fixed: new jaw.FourBytes([1, 2, 3, 4]),
+    bytes: new jaw.Bytes(new Uint8Array([5, 6, 7])),
+    choice: jaw.Choice.Payload(payload),
+});
+const encoded = jaw.encode(value);
+const decoded = jaw.decode(jaw.Message, encoded);
+if (decoded.payload.id !== 0xfedcba9876543210n) throw new Error('u64 mismatch');
+if (!(decoded.bytes.values instanceof Uint8Array)) throw new Error('byte storage mismatch');
+if (decoded.flags.mode !== 9) throw new Error('bitfield mismatch');
+if (decoded.choice.value.id !== payload.id) throw new Error('variant mismatch');
+const encodedAgain = jaw.encode(decoded);
+if (encoded.length !== encodedAgain.length || !encoded.every((v, i) => v === encodedAgain[i])) {
+    throw new Error('round trip mismatch');
+}
+"#,
+    );
+    let _ = fs::remove_file(output);
+}
+
 #[test]
 fn guard_is_plumbed_into_all_generators() {
     let world = world_from(
@@ -130,6 +251,14 @@ dyn_array Pods : u32 * MyPOD
         "cpp guard should use division to avoid overflow"
     );
     let _ = fs::remove_file(&cpp_out);
+
+    // JavaScript
+    let js_out = temp_path("javascript_guard_plumbed", "mjs");
+    codegen::emit_javascript(&world, &opts, &js_out).expect("emit JavaScript");
+    let js_src = fs::read_to_string(&js_out).expect("read JavaScript output");
+    assert!(js_src.contains("Math.floor(16 / 1)"));
+    assert!(js_src.contains("array too large"));
+    let _ = fs::remove_file(&js_out);
 
     // Swift
     let swift_out = temp_path("swift_guard_plumbed", "swift");

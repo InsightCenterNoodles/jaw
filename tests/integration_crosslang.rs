@@ -14,11 +14,39 @@ fn has_prog(prog: &str, arg: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn has_jsc(prog: &Path) -> bool {
+    Command::new(prog)
+        .args(["-e", "if (typeof BigInt !== 'function') throw new Error()"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn python_cmd() -> Option<&'static str> {
     if has_prog("python3", "--version") {
         Some("python3")
     } else if has_prog("python", "--version") {
         Some("python")
+    } else {
+        None
+    }
+}
+
+#[derive(Clone)]
+enum JavaScriptEngine {
+    JavaScriptCore(PathBuf),
+    Node,
+}
+
+fn javascript_engine() -> Option<JavaScriptEngine> {
+    let system_jsc =
+        PathBuf::from("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc");
+    if has_jsc(Path::new("jsc")) {
+        Some(JavaScriptEngine::JavaScriptCore(PathBuf::from("jsc")))
+    } else if has_jsc(&system_jsc) {
+        Some(JavaScriptEngine::JavaScriptCore(system_jsc))
+    } else if has_prog("node", "--version") {
+        Some(JavaScriptEngine::Node)
     } else {
         None
     }
@@ -50,6 +78,7 @@ fn load_world() -> Result<compile::World, DynError> {
 }
 
 struct Bindings {
+    javascript_dir: PathBuf,
     python_dir: PathBuf,
     python_driver: PathBuf,
     cpp_src_dir: PathBuf,
@@ -60,6 +89,19 @@ struct Bindings {
 
 fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindings, DynError> {
     fs::create_dir_all(out_root)?;
+
+    // JavaScript
+    let javascript_dir = out_root.join("javascript");
+    fs::create_dir_all(&javascript_dir)?;
+    codegen::emit_javascript(
+        world,
+        &Default::default(),
+        javascript_dir.join("example.mjs"),
+    )?;
+    copy_file(
+        repo_root().join("assets/generated/javascript/driver.mjs"),
+        javascript_dir.join("driver.mjs"),
+    )?;
 
     // Python
     let python_dir = out_root.join("python");
@@ -121,6 +163,7 @@ fn regenerate_bindings(world: &compile::World, out_root: &Path) -> Result<Bindin
     )?;
 
     Ok(Bindings {
+        javascript_dir,
         python_dir: python_dir.clone(),
         python_driver: python_dir.join("driver.py"),
         cpp_src_dir,
@@ -298,6 +341,55 @@ fn run_swift_roundtrip(
     Ok(())
 }
 
+fn run_javascript_roundtrip(
+    engine: &JavaScriptEngine,
+    source_dir: &Path,
+    in_path: &Path,
+    out_path: Option<&Path>,
+) -> Result<(), DynError> {
+    let mut command = match engine {
+        JavaScriptEngine::JavaScriptCore(path) => {
+            let mut command = Command::new(path);
+            command.arg("-m").arg(source_dir.join("driver.mjs"));
+            command
+        }
+        JavaScriptEngine::Node => {
+            let mut command = Command::new("node");
+            command.arg(source_dir.join("driver.mjs"));
+            command
+        }
+    };
+    command.arg("--").arg(in_path);
+    if out_path.is_some() {
+        command.arg("--emit");
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "JavaScript driver round-trip failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    if let Some(out_path) = out_path {
+        let hex = String::from_utf8(output.stdout)?;
+        let hex = hex.trim();
+        if !hex.len().is_multiple_of(2) {
+            return Err("JavaScript driver emitted malformed hexadecimal output".into());
+        }
+        let bytes = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair = std::str::from_utf8(pair)?;
+                Ok(u8::from_str_radix(pair, 16)?)
+            })
+            .collect::<Result<Vec<_>, DynError>>()?;
+        fs::write(out_path, bytes)?;
+    }
+    Ok(())
+}
+
 fn golden_bytes() -> Result<Vec<u8>, DynError> {
     let text = include_str!("data/example.golden.hex");
     let digits: String = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -370,6 +462,10 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
         );
         None
     };
+    let javascript_engine = javascript_engine();
+    if javascript_engine.is_none() {
+        eprintln!("skipping JavaScript compatibility checks: no JavaScript engine is available");
+    }
 
     let dumps_dir = workdir.join("dumps");
     fs::create_dir_all(&dumps_dir)?;
@@ -377,6 +473,7 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
     let py_dump = dumps_dir.join("from_py.bin");
     let rs_dump = dumps_dir.join("from_rs.bin");
     let swift_dump = dumps_dir.join("from_swift.bin");
+    let javascript_dump = dumps_dir.join("from_javascript.bin");
     let golden = golden_bytes()?;
 
     // 1) Dump from C++; validate via Python and Rust
@@ -388,6 +485,15 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
         run_swift_roundtrip(exe, &cpp_dump, Some(&swift_dump))?;
         assert_golden(&swift_dump, &golden)?;
     }
+    if let Some(engine) = &javascript_engine {
+        run_javascript_roundtrip(
+            engine,
+            &bindings.javascript_dir,
+            &cpp_dump,
+            Some(&javascript_dump),
+        )?;
+        assert_golden(&javascript_dump, &golden)?;
+    }
 
     // 2) Dump from Python; validate via C++ and Rust
     run_python_dump(py, &bindings.python_driver, &bindings.python_dir, &py_dump)?;
@@ -396,6 +502,9 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
     run_rust_read(&rust_exe, &py_dump)?;
     if let Some(exe) = &swift_exe {
         run_swift_roundtrip(exe, &py_dump, None)?;
+    }
+    if let Some(engine) = &javascript_engine {
+        run_javascript_roundtrip(engine, &bindings.javascript_dir, &py_dump, None)?;
     }
 
     // 3) Dump from Rust; validate via Python and C++
@@ -415,6 +524,20 @@ fn cross_language_roundtrip_and_compatibility() -> Result<(), DynError> {
         )?;
         run_cpp_read(&cpp_exe, &swift_dump)?;
         run_rust_read(&rust_exe, &swift_dump)?;
+    }
+    if let Some(engine) = &javascript_engine {
+        run_javascript_roundtrip(engine, &bindings.javascript_dir, &rs_dump, None)?;
+        run_python_read(
+            py,
+            &bindings.python_driver,
+            &bindings.python_dir,
+            &javascript_dump,
+        )?;
+        run_cpp_read(&cpp_exe, &javascript_dump)?;
+        run_rust_read(&rust_exe, &javascript_dump)?;
+        if let Some(exe) = &swift_exe {
+            run_swift_roundtrip(exe, &javascript_dump, None)?;
+        }
     }
 
     Ok(())

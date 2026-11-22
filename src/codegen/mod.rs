@@ -1,4 +1,5 @@
 mod cpp;
+mod javascript;
 mod python;
 mod rust;
 mod swift;
@@ -173,6 +174,18 @@ pub fn emit_cpp(
     let mut out = open_outfile(path, "{", "}")?;
     cpp::emit(world, global, &mut out)
         .with_context(|| format!("while generating C++ into {}", path.display()))
+}
+
+/// Generates a dependency-free JavaScript ES module into the given path.
+pub fn emit_javascript(
+    world: &World,
+    global: &GlobalOptions,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<()> {
+    let path = path.as_ref();
+    let mut out = open_outfile(path, "{", "}")?;
+    javascript::emit(world, global, &mut out)
+        .with_context(|| format!("while generating JavaScript into {}", path.display()))
 }
 
 /// Generates Python code for a compiled `World` into the given path.

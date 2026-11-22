@@ -1,13 +1,14 @@
 # jaw
 
-A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, Python, Rust and Swift.
+A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, JavaScript, Python, Rust and Swift.
 
 Quickstart
 
 - Build: `cargo build`
-- Run: `cargo run -- --kind <cpp|python|rust|swift> <OUTPUT> <INPUT.jaw>...`
+- Run: `cargo run -- --kind <cpp|javascript|python|rust|swift> <OUTPUT> <INPUT.jaw>...`
   - Example (Python): `cargo run -- --kind python /tmp/example.py assets/example.jaw`
   - Example (C++): `cargo run -- --kind cpp /tmp/example.hpp assets/example.jaw`
+  - Example (JavaScript): `cargo run -- --kind javascript /tmp/example.js assets/example.jaw`
   - Example (Rust): `cargo run -- --kind rust /tmp/example.rs assets/example.jaw`
   - Example (Swift): `cargo run -- --kind swift /tmp/example.swift assets/example.jaw`
 
@@ -59,6 +60,8 @@ Generated Code
 
 - Python: reader/writer helpers and simple data structures. See `assets/generated/python/` examples.
 - C++: header-only types and readers/writers.
+- JavaScript: a dependency-free ES module for modern browsers and Node.js. Byte arrays use
+  `Uint8Array`; 64-bit integers use `BigInt`.
 - Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write`.
 - Swift: Foundation-based value types implementing `JawReadable`/`JawWritable`, with `Data` and stream adapters.
 
