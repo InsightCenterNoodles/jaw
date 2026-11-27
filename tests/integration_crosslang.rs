@@ -374,12 +374,12 @@ fn run_javascript_roundtrip(
     if let Some(out_path) = out_path {
         let hex = String::from_utf8(output.stdout)?;
         let hex = hex.trim();
-        if !hex.len().is_multiple_of(2) {
+        let (pairs, remainder) = hex.as_bytes().as_chunks::<2>();
+        if !remainder.is_empty() {
             return Err("JavaScript driver emitted malformed hexadecimal output".into());
         }
-        let bytes = hex
-            .as_bytes()
-            .chunks_exact(2)
+        let bytes = pairs
+            .iter()
             .map(|pair| {
                 let pair = std::str::from_utf8(pair)?;
                 Ok(u8::from_str_radix(pair, 16)?)

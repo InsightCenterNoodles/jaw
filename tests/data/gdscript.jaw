@@ -1,0 +1,46 @@
+const TOP_BIT : u64 = 9223372036854775808
+const MAX_ID : u64 = 18446744073709551615
+const MIN_I64 : i64 = -9223372036854775808
+const ENABLED : bool = true
+const SCALE : f32 = 1.25
+
+enum Kind : u64
+- A = 1
+- reserve 2
+
+bits Flags : u64
+- 0-3 mode : u8
+- 63 set : u8
+
+bits Full : u64
+- 0-63 all_bits : u64
+
+fixed_array Pair : 2 * bool
+fixed_array Four : 4 * u8
+pack Packed
+- valid : ENABLED
+- pair : Pair
+
+dyn_array Bytes : u64 * u8
+dyn_array Words : u8 * u16
+dyn_array EmptyList : u32 * Empty
+seq Empty
+
+seq Scalars
+- small : i8
+- medium : i16
+- large : i32
+- signed_value : i64
+- unsigned_value : u64
+- ratio : f64
+- valid : ENABLED
+
+variant Choice : u64
+- Top = 9223372036854775808 => void
+- Max = 18446744073709551615 => u32
+
+seq Node
+- match : u8
+- match_ : u8
+- encode : u8
+- get_property_list : u8

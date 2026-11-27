@@ -17,6 +17,17 @@ jobs:
       - name: Install cross-language test dependencies
         run: sudo apt-get update && sudo apt-get install --yes cmake g++ python3
 
+      - name: Install Godot 4.7 for GDScript tests
+        working-directory: ${{ runner.temp }}
+        run: |
+          asset=Godot_v4.7.2-stable_linux.x86_64
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/$asset.zip" \
+            --output "$asset.zip"
+          echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $asset.zip" | sha256sum --check
+          unzip -q "$asset.zip"
+          echo "GODOT_BIN=$PWD/$asset" >> "$GITHUB_ENV"
+
       - name: Use stable Rust
         run: |
           rustup update stable

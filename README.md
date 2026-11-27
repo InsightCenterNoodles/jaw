@@ -1,13 +1,14 @@
 # jaw
 
-A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, JavaScript, Python, Rust and Swift.
+A binary protocol code generator. A small DSL (`.jaw`) is used to describe binary message layouts. Code generation is provided for C++, GDScript, JavaScript, Python, Rust and Swift.
 
 Quickstart
 
 - Build: `cargo build`
-- Run: `cargo run -- --kind <cpp|javascript|python|rust|swift> <OUTPUT> <INPUT.jaw>...`
+- Run: `cargo run -- --kind <cpp|gdscript|javascript|python|rust|swift> <OUTPUT> <INPUT.jaw>...`
   - Example (Python): `cargo run -- --kind python /tmp/example.py assets/example.jaw`
   - Example (C++): `cargo run -- --kind cpp /tmp/example.hpp assets/example.jaw`
+  - Example (GDScript): `cargo run -- --kind gdscript /tmp/example.gd assets/example.jaw`
   - Example (JavaScript): `cargo run -- --kind javascript /tmp/example.js assets/example.jaw`
   - Example (Rust): `cargo run -- --kind rust /tmp/example.rs assets/example.jaw`
   - Example (Swift): `cargo run -- --kind swift /tmp/example.swift assets/example.jaw`
@@ -60,6 +61,7 @@ Generated Code
 
 - Python: reader/writer helpers and simple data structures. See `assets/generated/python/` examples.
 - C++: header-only types and readers/writers.
+- GDScript: a single preloaded script for Godot 4.7 with typed messages and a `PackedByteArray` API.
 - JavaScript: a dependency-free ES module for modern browsers and Node.js. Byte arrays use
   `Uint8Array`; 64-bit integers use `BigInt`.
 - Rust: a module with types plus `read_<Type>`/`write_<Type>` functions using `std::io::Read/Write`.
@@ -70,3 +72,46 @@ dynamic `u8` arrays to `Foundation.Data`. `--swift-share-protocols <MODULE>` imp
 complete Jaw Swift runtime from a shared module instead of emitting it into the output.
 `JawOutputStream` buffers writes and must be explicitly flushed with `flush()` before its
 underlying stream is consumed or closed.
+
+### Godot 4.7
+
+Place the generated `.gd` file in the project and preload it. Schema types and constants use a
+`Jaw_` prefix to avoid clashes with Godot's built-in classes. Fields that collide with GDScript
+identifiers are escaped. In this example, JAW's `var` field becomes `var_`.
+
+```gdscript
+const Messages = preload("res://example.gd")
+
+func make_packet() -> PackedByteArray:
+    var packet := Messages.Jaw_Root.new()
+    packet.name = Messages.Jaw_ShortString.new("ready".to_utf8_buffer())
+    packet.var_ = Messages.Jaw_MyVariant.make_Empty()
+    var encoded := packet.encode()
+    if encoded.error != OK:
+        push_error(encoded.message)
+        return PackedByteArray()
+    return encoded.value
+
+func receive_packet(bytes: PackedByteArray) -> void:
+    var decoded := Messages.Jaw_Root.decode(bytes)
+    if decoded.error != OK:
+        push_warning("Byte %d: %s" % [decoded.offset, decoded.message])
+        return
+    var packet: Messages.Jaw_Root = decoded.value
+    print(packet.name.values.get_string_from_utf8())
+```
+
+- `encode()` and `decode(bytes)` return a `JawResult` with `error`, `offset` and `message`.
+  On success, `error` is `OK` and `value` contains the bytes or decoded object.
+  `decode()` expects exactly one value and rejects trailing bytes.
+- Array wrappers expose `values` as a `PackedByteArray` for `u8` elements and a typed `Array`
+  for other elements. Enum wrappers expose `raw_value`, `VALUE_…` constants, and `member_name()`.
+  Variant wrappers expose `tag`, `payload`, `TAG_…` constants, and `make_…()` factories.
+- `u64` uses a signed Godot `int`. Values with the high bit set appear negative and retain all
+  64 wire bits. Packed booleans retain their raw byte in `WireBool` and validate on
+  `get_value()`, which also returns a `JawResult`.
+- `--guard-array-size` limits array decoding. The codec also limits message nesting and
+  arrays of zero-byte elements.
+
+Run the headless compatibility test with `cargo test --test gdscript`. Set `GODOT_BIN` to the
+Godot 4.7 executable if it is outside the standard locations.

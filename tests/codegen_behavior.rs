@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -78,7 +78,7 @@ fn assert_swift_source_compiles(path: &PathBuf) {
     );
 }
 
-fn assert_javascript_runs(path: &PathBuf, script: &str) {
+fn assert_javascript_runs(path: &Path, script: &str) {
     let system_jsc =
         PathBuf::from("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc");
     let jsc = if Command::new("jsc")

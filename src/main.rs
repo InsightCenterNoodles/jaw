@@ -7,6 +7,7 @@ use jaw::{GlobalOptions, codegen, compile};
 #[derive(Debug, Clone, ValueEnum)]
 enum GeneratorKind {
     Cpp,
+    Gdscript,
     Javascript,
     Python,
     Rust,
@@ -43,6 +44,7 @@ fn process() -> anyhow::Result<()> {
 
     match args.kind {
         GeneratorKind::Cpp => codegen::emit_cpp(&world, &args.options, args.output)?,
+        GeneratorKind::Gdscript => codegen::emit_gdscript(&world, &args.options, args.output)?,
         GeneratorKind::Javascript => codegen::emit_javascript(&world, &args.options, args.output)?,
         GeneratorKind::Python => codegen::emit_python(&world, &args.options, args.output)?,
         GeneratorKind::Rust => codegen::emit_rust(&world, &args.options, args.output)?,
