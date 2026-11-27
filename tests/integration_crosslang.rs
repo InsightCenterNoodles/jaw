@@ -41,12 +41,12 @@ enum JavaScriptEngine {
 fn javascript_engine() -> Option<JavaScriptEngine> {
     let system_jsc =
         PathBuf::from("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc");
-    if has_jsc(Path::new("jsc")) {
+    if has_prog("node", "--version") {
+        Some(JavaScriptEngine::Node)
+    } else if has_jsc(Path::new("jsc")) {
         Some(JavaScriptEngine::JavaScriptCore(PathBuf::from("jsc")))
     } else if has_jsc(&system_jsc) {
         Some(JavaScriptEngine::JavaScriptCore(system_jsc))
-    } else if has_prog("node", "--version") {
-        Some(JavaScriptEngine::Node)
     } else {
         None
     }
@@ -350,7 +350,10 @@ fn run_javascript_roundtrip(
     let mut command = match engine {
         JavaScriptEngine::JavaScriptCore(path) => {
             let mut command = Command::new(path);
-            command.arg("-m").arg(source_dir.join("driver.mjs"));
+            command
+                .arg("-m")
+                .arg(source_dir.join("driver.mjs"))
+                .arg("--");
             command
         }
         JavaScriptEngine::Node => {
@@ -359,7 +362,7 @@ fn run_javascript_roundtrip(
             command
         }
     };
-    command.arg("--").arg(in_path);
+    command.arg(in_path);
     if out_path.is_some() {
         command.arg("--emit");
     }
